@@ -1,0 +1,16 @@
+# build
+build/
+*.o
+*.a
+
+# sistema
+*.swp
+*~
+.DS_Store
+
+# aseprite (fonte, não precisa versionar)
+*.aseprite
+*.ase
+
+# binário
+skc_e195
