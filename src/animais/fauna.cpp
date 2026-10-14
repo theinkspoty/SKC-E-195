@@ -15,6 +15,7 @@ const char* faunaName(FaunaType t) {
         case FaunaType::SeaPredator: return "Piscador";
         case FaunaType::LandPredator: return "Lobo";
         case FaunaType::SkyPredator: return "Falcon";
+        case FaunaType::SmallBird: return "Passarinho";
         default: return "?";
     }
 }
@@ -54,8 +55,13 @@ const char* faunaGoal(FaunaState s, FaunaType t) {
             return "esperar presas";
         case FaunaType::SkyPredator:
             if (s == FaunaState::Forage) return "caçar do céu";
-            if (s == FaunaState::Rest) return "saciedade";
-            return "circular";
+            if (s == FaunaState::Rest) return "pousado";
+            return "patrulhar";
+        case FaunaType::SmallBird:
+            if (s == FaunaState::Forage) return "comer sementes";
+            if (s == FaunaState::Flee) return "fugir em bando";
+            if (s == FaunaState::Rest) return "pousado no galho";
+            return "voar em bando";
         default: return "existir";
     }
 }
@@ -178,6 +184,27 @@ std::string Ecosystem::goalOf(const Fauna& f) {
     return faunaGoal(f.state, f.type);
 }
 
+std::string Ecosystem::nicheOf(const Fauna& f) {
+    // descreve o nicho baseado no genoma
+    std::string diet, hab, act;
+    float p = f.g.dietPlankton, pl = f.g.dietPlants, m = f.g.dietMeat;
+    if (p > 0.6f && p > pl && p > m) diet = "planctonívoro";
+    else if (pl > 0.6f && pl > p && pl > m) diet = "herbívoro";
+    else if (m > 0.6f && m > p && m > pl) diet = "carnívoro";
+    else if (p > 0.3f && pl > 0.3f) diet = "onívoro";
+    else diet = "omnívoro fraco";
+
+    if (f.g.habitatWet > 0.7f) hab = "aquático";
+    else if (f.g.habitatDry > 0.7f) hab = "terrestre";
+    else hab = "anfíbio";
+
+    if (f.g.nocturnal > 0.6f) act = "noturno";
+    else if (f.g.nocturnal < 0.3f) act = "diurno";
+    else act = "crepuscular";
+
+    return diet + " · " + hab + " · " + act;
+}
+
 // pousa um animal terrestre na terra mais próxima (nunca na água)
 static bool snapToLand(World& w, float& x, float& y) {
     int tx = (int)x, ty = (int)y;
@@ -234,13 +261,47 @@ void Ecosystem::spawnFauna(FaunaType t, float x, float y, int parentA, int paren
          (t == FaunaType::Amphibian ? 0.8f : 1.f)), 0.3f), 0.2f, 2.4f);
     f.g.vision = clampf(gauss(f.isPredator() ? 7.f : 5.f, 1.f), 2.f, 12.f);
     f.g.metabolism = clampf(gauss(0.7f + f.g.size * 0.25f, 0.08f), 0.3f, 1.7f);
+    f.g.aggression = clampf(gauss(f.isPredator() ? 0.65f : 0.25f, 0.15f), 0.05f, 0.95f);
     f.g.lifespan = clampf(gauss(
         f.isPredator() ? 7.f :
         (t == FaunaType::Medusa ? 5.f :
          (t == FaunaType::Fish ? 6.f :
           (t == FaunaType::Amphibian ? 6.f :
-           (t == FaunaType::Scavenger ? 5.f : 6.f)))), 1.f), 2.f, 13.f);
-    f.g.aggression = clampf(gauss(f.isPredator() ? 0.65f : 0.25f, 0.15f), 0.05f, 0.95f);
+           (t == FaunaType::Scavenger ? 5.f :
+            (t == FaunaType::SmallBird ? 3.f : 6.f))))), 1.5f), 2.f, 13.f);
+    // nicho inicial
+    switch (t) {
+        case FaunaType::Fish:
+            f.g.dietPlankton = 0.9f; f.g.habitatWet = 1.f; f.g.nocturnal = 0.2f;
+            break;
+        case FaunaType::Medusa:
+            f.g.dietPlankton = 0.95f; f.g.habitatWet = 1.f; f.g.nocturnal = 0.4f;
+            break;
+        case FaunaType::Amphibian:
+            f.g.dietPlankton = 0.5f; f.g.dietPlants = 0.4f; f.g.habitatWet = 0.7f;
+            break;
+        case FaunaType::Herbivore:
+            f.g.dietPlants = 0.9f; f.g.habitatDry = 0.7f; f.g.nocturnal = 0.2f;
+            break;
+        case FaunaType::Scavenger:
+            f.g.dietMeat = 0.9f; f.g.habitatDry = 0.6f; f.g.nocturnal = 0.5f;
+            break;
+        case FaunaType::SeaPredator:
+            f.g.dietMeat = 0.9f; f.g.habitatWet = 0.9f; f.g.nocturnal = 0.6f;
+            break;
+        case FaunaType::LandPredator:
+            f.g.dietMeat = 0.9f; f.g.habitatDry = 0.8f; f.g.nocturnal = 0.7f;
+            break;
+        case FaunaType::SkyPredator:
+            f.g.dietMeat = 0.8f; f.g.habitatDry = 0.5f; f.g.nocturnal = 0.2f;
+            break;
+        case FaunaType::SmallBird:
+            f.g.dietPlants = 0.8f; f.g.dietPlankton = 0.2f; f.g.habitatDry = 0.6f; f.g.nocturnal = 0.1f;
+            f.g.size = 0.3f; // bem pequeno
+            f.g.speed = 1.3f; // rápido
+            break;
+        default: break;
+    }
     fauna_.push_back(f);
     emergences_++;
 }
@@ -448,6 +509,13 @@ Fauna Ecosystem::makeChild(const Fauna& a, const Fauna& b) {
     c.g.metabolism = clampf(gauss((a.g.metabolism + b.g.metabolism) * 0.5f, mutMeta), 0.3f, 1.9f);
     c.g.lifespan = clampf(gauss((a.g.lifespan + b.g.lifespan) * 0.5f, mutLife), 1.5f, 14.f);
     c.g.aggression = clampf(gauss((a.g.aggression + b.g.aggression) * 0.5f, 0.1f), 0.05f, 0.95f);
+    // nicho: herança + mutação (evolução direcional)
+    c.g.dietPlankton = clampf(gauss((a.g.dietPlankton + b.g.dietPlankton) * 0.5f, 0.12f), 0.f, 1.f);
+    c.g.dietPlants = clampf(gauss((a.g.dietPlants + b.g.dietPlants) * 0.5f, 0.12f), 0.f, 1.f);
+    c.g.dietMeat = clampf(gauss((a.g.dietMeat + b.g.dietMeat) * 0.5f, 0.12f), 0.f, 1.f);
+    c.g.habitatWet = clampf(gauss((a.g.habitatWet + b.g.habitatWet) * 0.5f, 0.1f), 0.f, 1.f);
+    c.g.habitatDry = clampf(gauss((a.g.habitatDry + b.g.habitatDry) * 0.5f, 0.1f), 0.f, 1.f);
+    c.g.nocturnal = clampf(gauss((a.g.nocturnal + b.g.nocturnal) * 0.5f, 0.1f), 0.f, 1.f);
     for (int i = 0; i < FAUNA_TYPE_COUNT; i++) {
         c.fearOf[i] = clampf((a.fearOf[i] + b.fearOf[i]) * 0.4f, 0.f, 1.f);
     }
@@ -634,6 +702,7 @@ void Ecosystem::updateAmphibian(Fauna& f, float dt) {
     };
 
     // anfíbio: vive na margem, precisa de água por perto, come pequenos
+    // usa visão como proxy de inteligência: melhor visão = melhor decisão
     float px, py;
     FaunaType pt;
     if (nearestPredatorThreat(f, px, py, pt)) {
@@ -642,12 +711,13 @@ void Ecosystem::updateAmphibian(Fauna& f, float dt) {
         float dx = f.x - px, dy = f.y - py;
         float len = std::sqrt(dx * dx + dy * dy);
         if (len < 0.01f) len = 1.f;
+        float fleeBoost = 1.f + f.g.vision * 0.04f;
         if (!world_.nearWater(f.x + dx / len * 3.f, f.y + dy / len * 3.f, 1.5f)) {
             float wx, wy;
-            if (findNearbyWater(wx, wy)) moveToward(f, wx, wy, dt, 1.1f, false);
-            else moveToward(f, f.x + dx / len * 4.f, f.y + dy / len * 4.f, dt, 1.f, false);
+            if (findNearbyWater(wx, wy)) moveToward(f, wx, wy, dt, 1.1f * fleeBoost, false);
+            else moveToward(f, f.x + dx / len * 4.f, f.y + dy / len * 4.f, dt, fleeBoost, false);
         } else {
-            moveToward(f, f.x + dx / len * 4.f, f.y + dy / len * 4.f, dt, 1.1f, false);
+            moveToward(f, f.x + dx / len * 4.f, f.y + dy / len * 4.f, dt, 1.1f * fleeBoost, false);
         }
         return;
     }
@@ -690,7 +760,7 @@ void Ecosystem::updateAmphibian(Fauna& f, float dt) {
                 return;
             }
         }
-        // procura comida: água (plancton) OU terra (plantas)
+        // procura comida: prefere o que combina com o nicho
         float bx = f.x, by = f.y, best = -1.f;
         int r = (int)(f.g.vision + 3.f);
         for (int y = ty - r; y <= ty + r; y++) {
@@ -698,9 +768,10 @@ void Ecosystem::updateAmphibian(Fauna& f, float dt) {
                 if (!world_.inBounds(x, y)) continue;
                 const TileData& t = world_.at(x, y);
                 float sc = -1.f;
-                if (t.plankton > 0) sc = t.plankton * 3.f;
-                else if (t.corpse > 0) sc = 2.5f;
-                else if (t.plant.kind != PlantKind::None && t.plant.stage > 0) sc = 1.2f;
+                if (t.plankton > 0) sc = t.plankton * 3.f * f.g.dietPlankton;
+                else if (t.corpse > 0) sc = 2.5f * f.g.dietMeat;
+                else if (t.plant.kind != PlantKind::None && t.plant.stage > 0)
+                    sc = 1.2f * f.g.dietPlants * t.plant.gene.yield;
                 if (sc < 0.f) continue;
                 sc -= dist2(f.x, f.y, x + 0.5f, y + 0.5f) * 0.03f;
                 if (sc > best) { best = sc; bx = x + 0.5f; by = y + 0.5f; }
@@ -758,24 +829,39 @@ void Ecosystem::schoolFish(Fauna& f, float dt) {
     for (const auto& o : fauna_) {
         if (o.id == f.id || !o.alive() || o.type != FaunaType::Fish) continue;
         float d = dist2(f.x, f.y, o.x, o.y);
-        if (d > 36.f) continue; // raio do cardume
+        if (d > 36.f) continue;
         cx += o.x;
         cy += o.y;
         avgVx += o.targetX - o.x;
         avgVy += o.targetY - o.y;
         n++;
     }
-    if (n == 0) return;
+
+    // AFASTAR DA BORDA: força pro centro do oceano
+    float margin = 8.f;
+    float pushX = 0, pushY = 0;
+    if (f.x < margin) pushX = (margin - f.x) * 0.5f;
+    if (f.x > world_.width() - margin) pushX = -(f.x - (world_.width() - margin)) * 0.5f;
+    if (f.y < margin) pushY = (margin - f.y) * 0.5f;
+    if (f.y > world_.height() - margin) pushY = -(f.y - (world_.height() - margin)) * 0.5f;
+    if (pushX != 0.f || pushY != 0.f) {
+        moveToward(f, f.x + pushX, f.y + pushY, dt, 0.8f, true);
+        return;
+    }
+
+    if (n == 0) {
+        // sozinho: vaga devagar na água
+        if (chance(0.3f * dt)) wanderIn(f, dt * 0.5f, true);
+        return;
+    }
     cx /= n;
     cy /= n;
 
-    // coesão: puxa pro centro do cardume
     float dxC = cx - f.x, dyC = cy - f.y;
     float dC = std::sqrt(dxC * dxC + dyC * dyC);
     if (dC > 2.5f) {
         moveToward(f, cx, cy, dt, 0.6f, true);
     } else {
-        // alinhamento: segue a direção média do grupo
         avgVx /= n;
         avgVy /= n;
         float aLen = std::sqrt(avgVx * avgVx + avgVy * avgVy);
@@ -783,9 +869,12 @@ void Ecosystem::schoolFish(Fauna& f, float dt) {
             f.targetX = f.x + avgVx / aLen * 4.f;
             f.targetY = f.y + avgVy / aLen * 4.f;
             moveToward(f, f.targetX, f.targetY, dt, 0.55f, true);
+        } else {
+            // parados: vaga devagar junto
+            if (chance(0.2f * dt)) wanderIn(f, dt * 0.4f, true);
         }
     }
-    // separação: não encostar em ninguém
+    // separação
     for (const auto& o : fauna_) {
         if (o.id == f.id || !o.alive() || o.type != FaunaType::Fish) continue;
         float d = dist2(f.x, f.y, o.x, o.y);
@@ -1052,8 +1141,18 @@ void Ecosystem::huntPrey(Fauna& f, float dt, const FaunaType* preyTypes, int nPr
     bool anyFear = false;
     for (int i = 0; i < nPrey; i++) if (f.fearOf[(int)preyTypes[i]] > 0.6f) anyFear = true;
 
-    if ((f.energy < 55.f || (f.energy < 80.f && f.satisfaction < 0.3f)) &&
-        !anyFear &&
+    // cooldown de caça: 2 dias entre caçadas
+    if (f.stateT > 0.f) {
+        f.stateT -= dt;
+        // descansa enquanto espera
+        f.state = FaunaState::Rest;
+        f.energy += 0.4f * dt;
+        if (chance(0.3f * dt)) wanderIn(f, dt * 0.25f, f.type == FaunaType::SeaPredator);
+        return;
+    }
+
+    // só caça se tem fome de verdade
+    if (f.energy < 50.f && !anyFear &&
         nearestOfTypes(f, preyTypes, nPrey, hx, hy, hid)) {
         f.state = FaunaState::Forage;
         moveToward(f, hx, hy, dt, speedMul + f.g.aggression * 0.3f, f.canFly() || f.type == FaunaType::SeaPredator);
@@ -1064,9 +1163,9 @@ void Ecosystem::huntPrey(Fauna& f, float dt, const FaunaType* preyTypes, int nPr
                 if (chance(clampf(killChance, 0.15f, 0.9f))) {
                     prey.energy = 0.f;
                     dropCorpse(prey.x, prey.y, prey.g.size * 0.3f);
-                    f.energy = clampf(f.energy + 32.f, 0.f, 100.f);
-                    f.satisfaction = clampf(f.satisfaction + 0.5f, 0.f, 1.f);
-                    f.anger = clampf(f.anger - 0.3f, 0.f, 1.f);
+                    f.energy = clampf(f.energy + 35.f, 0.f, 100.f);
+                    f.satisfaction = 1.f;
+                    f.stateT = 360.f; // 2 dias de descanso
                 } else {
                     learnFear(prey, f.type);
                     if (chance(0.3f)) {
@@ -1084,15 +1183,16 @@ void Ecosystem::huntPrey(Fauna& f, float dt, const FaunaType* preyTypes, int nPr
         return;
     }
 
-    if (f.satisfaction > 0.55f || (f.energy > 85.f && f.satisfaction > 0.2f)) {
+    // saciedade: dorme e digere
+    if (f.satisfaction > 0.4f) {
         f.state = FaunaState::Rest;
-        f.satisfaction = clampf(f.satisfaction - 0.05f * dt, 0.f, 1.f);
+        f.satisfaction = clampf(f.satisfaction - 0.02f * dt, 0.f, 1.f);
         f.energy += 0.5f * dt;
-        wanderIn(f, dt * 0.3f, f.type == FaunaType::SeaPredator);
+        if (chance(0.4f * dt)) wanderIn(f, dt * 0.2f, f.type == FaunaType::SeaPredator);
         return;
     }
 
-    if (f.mateCooldown <= 0.f && f.energy > 60.f && f.age > f.g.lifespan * 0.2f && f.satisfaction > 0.2f) {
+    if (f.mateCooldown <= 0.f && f.energy > 65.f && f.age > f.g.lifespan * 0.2f && f.satisfaction > 0.3f) {
         f.state = FaunaState::Mate;
         for (auto& b : fauna_) {
             if (b.id == f.id || !b.alive() || b.type != f.type || b.male == f.male) continue;
@@ -1105,7 +1205,7 @@ void Ecosystem::huntPrey(Fauna& f, float dt, const FaunaType* preyTypes, int nPr
     }
 
     f.state = FaunaState::Idle;
-    f.satisfaction = clampf(f.satisfaction - 0.04f * dt, 0.f, 1.f);
+    f.satisfaction = clampf(f.satisfaction - 0.03f * dt, 0.f, 1.f);
     wanderIn(f, dt, f.type == FaunaType::SeaPredator);
 }
 
@@ -1120,8 +1220,193 @@ void Ecosystem::updateLandPredator(Fauna& f, float dt) {
 }
 
 void Ecosystem::updateSkyPredator(Fauna& f, float dt) {
-    static const FaunaType prey[] = {FaunaType::Scavenger, FaunaType::Herbivore};
-    huntPrey(f, dt, prey, 2, 1.2f);
+    // FALCÃO: voa alto, caça mergulhando, pousa em árvores
+    float hx, hy;
+    int hid = -1;
+    bool anyFear = false;
+    for (int i = 0; i < 2; i++) {
+        static const FaunaType preyT[] = {FaunaType::Scavenger, FaunaType::Herbivore};
+        if (f.fearOf[(int)preyT[i]] > 0.6f) anyFear = true;
+    }
+
+    // pousado: descansa em terra
+    if (f.state == FaunaState::Rest && world_.walkable(f.x, f.y)) {
+        f.energy += 0.5f * dt;
+        f.satisfaction = clampf(f.satisfaction - 0.05f * dt, 0.f, 1.f);
+        if (f.satisfaction < 0.2f) f.state = FaunaState::Idle;
+        return;
+    }
+
+    // caça: procura presa do alto e mergulha
+    if ((f.energy < 55.f || (f.energy < 80.f && f.satisfaction < 0.3f)) && !anyFear) {
+        static const FaunaType preyT[] = {FaunaType::Scavenger, FaunaType::Herbivore};
+        if (nearestOfTypes(f, preyT, 2, hx, hy, hid)) {
+            f.state = FaunaState::Forage;
+            // voa até sobre a presa
+            float d = dist2(f.x, f.y, hx, hy);
+            if (d > 4.f) {
+                moveToward(f, hx, hy, dt, 1.3f, true); // voa rápido
+            } else {
+                // MERGULHO: ataque rápido
+                for (auto& prey : fauna_) {
+                    if (prey.id != hid || !prey.alive()) continue;
+                    float killChance = 0.55f + f.g.aggression * 0.3f;
+                    if (chance(clampf(killChance, 0.2f, 0.9f))) {
+                        prey.energy = 0.f;
+                        dropCorpse(prey.x, prey.y, prey.g.size * 0.2f);
+                        f.energy = clampf(f.energy + 30.f, 0.f, 100.f);
+                        f.satisfaction = 1.f;
+                        // procura árvore pra pousar e comer
+                        f.state = FaunaState::Rest;
+                        f.stateT = 60.f;
+                    } else {
+                        learnFear(prey, f.type);
+                    }
+                    break;
+                }
+            }
+            return;
+        }
+    }
+
+    // pousa em árvore/rocha depois de comer
+    if (f.satisfaction > 0.5f && world_.walkable(f.x, f.y)) {
+        f.state = FaunaState::Rest;
+        return;
+    }
+
+    // voa procurando lugar bom
+    f.state = FaunaState::Idle;
+    // prefere ficar perto de floresta (árvore pra pousar)
+    if (chance(0.3f * dt)) {
+        // procura floresta e voa até lá
+        int r = 8;
+        int tx = (int)f.x, ty = (int)f.y;
+        float best = 1e9f;
+        float bx = f.x, by = f.y;
+        for (int y = ty - r; y <= ty + r; y++) {
+            for (int x = tx - r; x <= tx + r; x++) {
+                if (!world_.inBounds(x, y)) continue;
+                if (world_.at(x, y).type != Tile::Forest) continue;
+                float d = dist2(f.x, f.y, x + 0.5f, y + 0.5f);
+                if (d < best) { best = d; bx = x + 0.5f; by = y + 0.5f; }
+            }
+        }
+        if (best < 100.f) moveToward(f, bx, by, dt, 0.8f, true);
+        else wanderIn(f, dt * 0.5f, true);
+    }
+}
+
+void Ecosystem::schoolBirds(Fauna& f, float dt) {
+    // BANDO DE PASSARINHOS: juntos, mesmo medo
+    float cx = 0, cy = 0;
+    int n = 0;
+    for (const auto& o : fauna_) {
+        if (o.id == f.id || !o.alive() || o.type != FaunaType::SmallBird) continue;
+        if (dist2(f.x, f.y, o.x, o.y) > 25.f) continue;
+        cx += o.x;
+        cy += o.y;
+        n++;
+    }
+    // afasta da borda
+    float margin = 5.f;
+    float pushX = 0, pushY = 0;
+    if (f.x < margin) pushX = (margin - f.x) * 0.4f;
+    if (f.x > world_.width() - margin) pushX = -(f.x - (world_.width() - margin)) * 0.4f;
+    if (f.y < margin) pushY = (margin - f.y) * 0.4f;
+    if (f.y > world_.height() - margin) pushY = -(f.y - (world_.height() - margin)) * 0.4f;
+    if (pushX != 0.f || pushY != 0.f) {
+        moveToward(f, f.x + pushX, f.y + pushY, dt, 0.7f, true);
+        return;
+    }
+
+    if (n == 0) {
+        if (chance(0.3f * dt)) wanderIn(f, dt * 0.5f, true);
+        return;
+    }
+    cx /= n;
+    cy /= n;
+    float dxC = cx - f.x, dyC = cy - f.y;
+    float dC = std::sqrt(dxC * dxC + dyC * dyC);
+    if (dC > 3.f) {
+        moveToward(f, cx, cy, dt, 0.6f, true);
+    } else if (chance(0.2f * dt)) {
+        wanderIn(f, dt * 0.4f, true);
+    }
+}
+
+void Ecosystem::updateSmallBird(Fauna& f, float dt) {
+    // PASSARINHO: voa em bando, come sementes, foge de tudo
+    float px, py;
+    FaunaType pt;
+    if (nearestPredatorThreat(f, px, py, pt)) {
+        learnFear(f, pt);
+        f.state = FaunaState::Flee;
+        float dx = f.x - px, dy = f.y - py;
+        float len = std::sqrt(dx * dx + dy * dy);
+        if (len < 0.01f) len = 1.f;
+        moveToward(f, f.x + dx / len * 6.f, f.y + dy / len * 6.f, dt, 1.3f, true);
+        schoolBirds(f, dt); // foge em bando
+        return;
+    }
+    f.fear = clampf(f.fear - 0.15f * dt, 0.f, 1.f);
+
+    // come sementes (planta madura) ou plâncton
+    if (f.energy < 70.f) {
+        f.state = FaunaState::Forage;
+        int tx = (int)f.x, ty = (int)f.y;
+        // procura planta madura
+        float bx = f.x, by = f.y, best = -1.f;
+        int r = (int)(f.g.vision + 2.f);
+        for (int y = ty - r; y <= ty + r; y++) {
+            for (int x = tx - r; x <= tx + r; x++) {
+                if (!world_.inBounds(x, y)) continue;
+                const TileData& t = world_.at(x, y);
+                float sc = -1.f;
+                if (t.plant.kind != PlantKind::None && t.plant.stage >= 1)
+                    sc = t.plant.stage * t.plant.gene.yield;
+                else if (t.plankton > 0) sc = t.plankton * 0.5f;
+                if (sc < 0.f) continue;
+                sc -= dist2(f.x, f.y, x + 0.5f, y + 0.5f) * 0.04f;
+                if (sc > best) { best = sc; bx = x + 0.5f; by = y + 0.5f; }
+            }
+        }
+        if (best > 0.f) {
+            moveToward(f, bx, by, dt, 1.f, true);
+            if (dist2(f.x, f.y, bx, by) < 0.5f) {
+                TileData& t = world_.at((int)bx, (int)by);
+                if (t.plant.kind != PlantKind::None && t.plant.stage >= 1) {
+                    t.plant.stage--;
+                    if (chance(0.3f)) t.plant = Plant{};
+                    f.energy = clampf(f.energy + 12.f, 0.f, 100.f);
+                    f.satisfaction = clampf(f.satisfaction + 0.15f, 0.f, 1.f);
+                } else if (t.plankton > 0) {
+                    t.plankton--;
+                    f.energy = clampf(f.energy + 8.f, 0.f, 100.f);
+                }
+            }
+            schoolBirds(f, dt);
+            return;
+        }
+    }
+
+    // bando voa junto
+    schoolBirds(f, dt);
+
+    if (f.mateCooldown <= 0.f && f.energy > 55.f && f.age > f.g.lifespan * 0.2f) {
+        f.state = FaunaState::Mate;
+        for (auto& b : fauna_) {
+            if (b.id == f.id || !b.alive() || b.type != f.type || b.male == f.male) continue;
+            if (b.mateCooldown > 0.f || b.energy < 50.f) continue;
+            if (dist2(f.x, f.y, b.x, b.y) < 30.f) {
+                moveToward(f, b.x, b.y, dt, 0.8f, true);
+                return;
+            }
+        }
+    }
+
+    f.state = f.satisfaction > 0.3f ? FaunaState::Rest : FaunaState::Idle;
+    if (f.satisfaction > 0.f) f.satisfaction = clampf(f.satisfaction - 0.05f * dt, 0.f, 1.f);
 }
 
 void Ecosystem::updateEra(unsigned day) {
@@ -1330,7 +1615,7 @@ void Ecosystem::tryEmergence(unsigned day) {
         }
     }
 
-    // Falcon ← carroceiros
+    // Falcão ← carroceiros
     if (!pioneerDone_[(int)FaunaType::SkyPredator] && countType(FaunaType::Scavenger) >= 1) {
         for (auto& f : fauna_) {
             if (f.alive() && f.type == FaunaType::Scavenger) {
@@ -1339,7 +1624,24 @@ void Ecosystem::tryEmergence(unsigned day) {
                 f.g.vision = clampf(f.g.vision + 3.f, 5.f, 13.f);
                 f.energy = clampf(f.energy + 25.f, 0.f, 100.f);
                 pioneerDone_[(int)FaunaType::SkyPredator] = true;
-                loreAdd("Dia " + std::to_string(day) + ": alguem aprendeu a voar. O Falcon olha de cima.");
+                loreAdd("Dia " + std::to_string(day) + ": alguem aprendeu a voar. O Falcon.");
+                break;
+            }
+        }
+    }
+
+    // Passarinho ← plantas abundantes (ave pequena, come sementes)
+    if (!pioneerDone_[(int)FaunaType::SmallBird] &&
+        world_.plantDensity(world_.width() / 2, world_.height() / 2, world_.width() / 2) > 0.03f) {
+        // nasce de um anfíbio ou herbívoro que "voa" (mutação rara)
+        for (auto& f : fauna_) {
+            if (f.alive() && (f.type == FaunaType::Amphibian || f.type == FaunaType::Herbivore)) {
+                f.type = FaunaType::SmallBird;
+                f.g.size = 0.3f;
+                f.g.speed = 1.3f;
+                f.energy = clampf(f.energy + 20.f, 0.f, 100.f);
+                pioneerDone_[(int)FaunaType::SmallBird] = true;
+                loreAdd("Dia " + std::to_string(day) + ": um bicho pequeno aprendeu a voar. Passarinhos!");
                 break;
             }
         }
@@ -1394,6 +1696,15 @@ void Ecosystem::update(float dt, unsigned day) {
         float drain = 0.18f * f.g.metabolism;
         if (f.satisfaction > 0.3f) drain *= (1.f - f.satisfaction * 0.35f);
         if (f.state == FaunaState::Forage || f.state == FaunaState::Flee) drain += 0.06f * f.g.speed;
+        // nicho: habitat errado = gasta mais; habitat certo = gasta menos
+        if (world_.inBounds((int)f.x, (int)f.y)) {
+            Tile t = world_.at((int)f.x, (int)f.y).type;
+            bool wet = (t == Tile::Water || t == Tile::DeepWater);
+            if (wet && f.g.habitatWet > 0.6f) drain *= 0.85f; // em casa
+            if (!wet && f.g.habitatDry > 0.6f) drain *= 0.85f;
+            if (wet && f.g.habitatDry > 0.7f) drain *= 1.15f; // fora de casa
+            if (!wet && f.g.habitatWet > 0.7f) drain *= 1.15f;
+        }
         // competição suave
         int pop = countType(f.type);
         if (pop > 15) drain *= (1.f + (pop - 15) * 0.03f);
@@ -1490,8 +1801,16 @@ void Ecosystem::update(float dt, unsigned day) {
                 updateLandPredator(f, dt);
                 break;
             case FaunaType::SkyPredator:
-                // falcão: dorme de noite (já tratado acima)
                 updateSkyPredator(f, dt);
+                break;
+            case FaunaType::SmallBird:
+                if (night) {
+                    // passarinho dorme em galho
+                    f.state = FaunaState::Rest;
+                    f.energy += 1.f * dt;
+                    if (chance(0.3f * dt)) wanderIn(f, dt * 0.2f, true);
+                } else updateSmallBird(f, dt);
+                break;
                 break;
         }
     }

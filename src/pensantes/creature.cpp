@@ -32,6 +32,32 @@ const char* stateName(CState s) {
     }
 }
 
+const char* buildingName(int type) {
+    switch (type) {
+        case 0: return "Fogueira";
+        case 1: return "Toca";
+        case 2: return "Casa";
+        case 3: return "Celeiro";
+        case 4: return "Totem";
+        case 5: return "Muralha";
+        case 6: return "Templo";
+        default: return "?";
+    }
+}
+
+const char* buildingDesc(int type) {
+    switch (type) {
+        case 0: return "luz e calor";
+        case 1: return "abrigo simples";
+        case 2: return "casa de família";
+        case 3: return "guarda comida";
+        case 4: return "marca o território";
+        case 5: return "protege da guerra";
+        case 6: return "centro espiritual";
+        default: return "";
+    }
+}
+
 std::string makeName() {
     static const char* syl[] = {
         "ka", "mi", "tu", "ra", "so", "el", "an", "vi", "ne", "po",
@@ -57,6 +83,18 @@ std::string makeCommunityName() {
 Community* CreatureSim::community(int id) {
     for (auto& c : communities_) if (c.id == id) return &c;
     return nullptr;
+}
+
+const char* CreatureSim::culturalEraName() const {
+    switch (culturalEra_) {
+        case 0: return "Era Primitiva";
+        case 1: return "Descoberta do Fogo";
+        case 2: return "Idade das Ferramentas";
+        case 3: return "Agricultura";
+        case 4: return "Escrita e Cultura";
+        case 5: return "Civilizacao";
+        default: return "Era Desconhecida";
+    }
 }
 
 void CreatureSim::updateCommunities(float dt, unsigned day) {
@@ -123,18 +161,58 @@ void CreatureSim::updateCommunities(float dt, unsigned day) {
     for (auto& comm : communities_) {
         if (comm.memberIds.empty()) continue;
         // fogueira e toca: precisam de ferramenta em alguém
-        if (!comm.hasFire || !comm.hasHut) {
+        if (!comm.hasFire() || !comm.hasHut()) {
             for (int id : comm.memberIds) {
                 Creature* m = get(id);
                 if (!m || !m->alive()) continue;
                 if (m->k.tool_skill > 0.25f) {
-                    if (!comm.hasFire && m->k.fire_knowledge > 0.1f && chance(0.01f * dt * 30.f)) {
-                        comm.hasFire = true;
+                    if (!comm.hasFire() && m->k.fire_knowledge > 0.1f && chance(0.01f * dt * 30.f)) {
+                        Building b; b.type = 0; b.x = comm.x + frand(-2, 2); b.y = comm.y + frand(-2, 2);
+                        comm.buildings.push_back(b);
                         addEvent(comm.name + " acendeu a primeira fogueira.");
                     }
-                    if (!comm.hasFire && m->k.tool_skill > 0.35f && chance(0.008f * dt * 30.f)) {
-                        comm.hasHut = true;
+                    if (!comm.hasHut() && m->k.tool_skill > 0.35f && chance(0.008f * dt * 30.f)) {
+                        Building b; b.type = 1; b.x = comm.x + frand(-3, 3); b.y = comm.y + frand(-3, 3);
+                        comm.buildings.push_back(b);
                         addEvent(comm.name + " ergueu a primeira toca.");
+                    }
+                    // construções avançadas (limitadas pela era cultural)
+                    if (comm.hasHut() && comm.totalBuildings() < 8) {
+                        // casa (era ferramentas+)
+                        if (m->k.tool_skill > 0.5f && m->culturalLevel >= 2 && !comm.hasBuilding(2) &&
+                            chance(0.003f * dt * 30.f)) {
+                            Building b; b.type = 2; b.x = comm.x + frand(-4, 4); b.y = comm.y + frand(-4, 4);
+                            comm.buildings.push_back(b);
+                            addEvent(comm.name + " construiu uma casa.");
+                        }
+                        // celeiro (era agricultura+)
+                        if (m->tool == 4 && m->culturalLevel >= 3 && !comm.hasBuilding(3) &&
+                            chance(0.004f * dt * 30.f)) {
+                            Building b; b.type = 3; b.x = comm.x + frand(-4, 4); b.y = comm.y + frand(-4, 4);
+                            comm.buildings.push_back(b);
+                            addEvent(comm.name + " construiu um celeiro.");
+                        }
+                        // totem (marca território)
+                        if (m->g.intelligence > 0.4f && !comm.hasBuilding(4) &&
+                            chance(0.003f * dt * 30.f)) {
+                            Building b; b.type = 4; b.x = comm.x; b.y = comm.y - 3;
+                            comm.buildings.push_back(b);
+                            addEvent(comm.name + " ergueu um totem.");
+                        }
+                        // muralha (se tem guerra)
+                        if (m->tool == 3 && !comm.hasBuilding(5) && comm.totalBuildings() >= 3 &&
+                            chance(0.002f * dt * 30.f)) {
+                            Building b; b.type = 5; b.x = comm.x; b.y = comm.y;
+                            comm.buildings.push_back(b);
+                            addEvent(comm.name + " construiu uma muralha.");
+                        }
+                        // templo (era escrita+)
+                        if (m->culturalLevel >= 4 && !comm.hasBuilding(6) && m->g.intelligence > 0.5f &&
+                            chance(0.002f * dt * 30.f)) {
+                            Building b; b.type = 6; b.x = comm.x + 2; b.y = comm.y + 2;
+                            comm.buildings.push_back(b);
+                            addEvent(comm.name + " ergueu um templo!");
+                        }
                     }
                 }
             }
@@ -180,17 +258,19 @@ void CreatureSim::updateCommunities(float dt, unsigned day) {
                     if (dist2(ma->x, ma->y, mb->x, mb->y) > 16.f) continue;
 
                     Bond& b = ma->ensureBond(mb->id, day);
-                    bool war = ma->g.aggression > 0.55f && mb->g.aggression > 0.5f && chance(0.02f * dt);
+                    // GUERRA: moral baixa + agressividade + arma = conflito
+                    bool war = (ma->morality < 0.35f && ma->g.aggression > 0.5f && ma->tool == 3 &&
+                                chance(0.03f * dt));
                     if (war) {
-                        // conflito
-                        damage(*mb, 8.f, ma->id, day);
-                        addEvent("Tensao entre " + A.name + " e " + B.name + ".");
+                        damage(*mb, 12.f, ma->id, day);
+                        ma->em.anger = clampf(ma->em.anger + 0.3f, 0.f, 1.f);
+                        ma->reputation = clampf(ma->reputation - 0.2f, -1.f, 1.f);
+                        addEvent("GUERRA! " + A.name + " atacou " + B.name + "!");
                     } else {
                         // troca de ideias entre tribos
                         b.trust = clampf(b.trust + 0.04f * dt, -1.f, 1.f);
                         if (!A.groupIdeas.empty() && chance(0.04f * dt)) {
                             const Idea& idea = A.groupIdeas[irand(0, (int)A.groupIdeas.size() - 1)];
-                            // leva ideia de A para a comunidade de B
                             bool dup = false;
                             for (auto& gi : B.groupIdeas) if (gi.text == idea.text) { dup = true; break; }
                             if (!dup && B.groupIdeas.size() < 10) {
@@ -198,22 +278,13 @@ void CreatureSim::updateCommunities(float dt, unsigned day) {
                                 addEvent(B.name + " recebeu uma ideia de " + A.name + ".");
                             }
                         }
-                        if (!B.groupIdeas.empty() && chance(0.04f * dt)) {
-                            const Idea& idea = B.groupIdeas[irand(0, (int)B.groupIdeas.size() - 1)];
-                            bool dup = false;
-                            for (auto& gi : A.groupIdeas) if (gi.text == idea.text) { dup = true; break; }
-                            if (!dup && A.groupIdeas.size() < 10) {
-                                A.groupIdeas.push_back(idea);
-                                addEvent(A.name + " recebeu uma ideia de " + B.name + ".");
-                            }
-                        }
                         // casamento entre tribos
                         if (ma->male != mb->male && ma->mateCooldown <= 0.f && mb->mateCooldown <= 0.f &&
                             ma->energy > 60.f && mb->energy > 60.f && chance(0.01f * dt)) {
                             ma->em.mateId = mb->id;
                             mb->em.mateId = ma->id;
-                            ma->communityId = B.id; // se muda pra comunidade do par
-                            addEvent(ma->name + " se juntou a " + B.name + " por amor a " + mb->name + ".");
+                            ma->communityId = B.id;
+                            addEvent(ma->name + " se juntou a " + B.name + " por amor.");
                         }
                     }
                     return; // um encontro por tick
@@ -338,9 +409,19 @@ void CreatureSim::spawnStarter(int count) {
         c.g.fertility = clampf(gauss(1.f, 0.15f), 0.4f, 1.6f);
         c.g.robustness = clampf(gauss(0.5f, 0.15f), 0.1f, 0.9f);
         c.g.lifespan = clampf(gauss(10.f, 1.5f), 6.f, 14.f);
+        // corpo e mente: cada um é único
+        c.body.strength = clampf(gauss(0.5f, 0.2f), 0.1f, 1.f);
+        c.body.endurance = clampf(gauss(0.5f, 0.2f), 0.1f, 1.f);
+        c.body.agility = clampf(gauss(0.5f, 0.2f), 0.1f, 1.f);
+        c.body.health = 1.f;
+        c.mind.wisdom = clampf(gauss(0.15f, 0.1f), 0.f, 0.5f);
+        c.mind.memory = clampf(gauss(0.3f, 0.15f), 0.05f, 0.8f);
+        c.mind.creativity = clampf(gauss(0.3f, 0.2f), 0.f, 0.9f);
+        c.mind.willpower = clampf(gauss(0.5f, 0.2f), 0.1f, 1.f);
         c.g.aggression = clampf(gauss(0.3f, 0.1f), 0.05f, 0.9f);
         c.g.intelligence = clampf(gauss(0.25f, 0.1f), 0.05f, 0.7f);
         c.morality = clampf(0.5f + (c.pers.empathy - 0.5f) * 0.5f - (c.g.aggression - 0.3f) * 0.3f, 0.1f, 0.9f);
+        c.tool = 0;
         // personalidade: cada um é UM
         c.pers.sexuality = clampf(gauss(0.5f, 0.28f), 0.f, 1.f);
         c.pers.boldness = clampf(gauss(0.5f, 0.28f), 0.f, 1.f);
@@ -350,12 +431,20 @@ void CreatureSim::spawnStarter(int count) {
         c.pers.empathy = clampf(gauss(0.5f, 0.25f), 0.f, 1.f);
         c.pers.wanderlust = clampf(gauss(0.5f, 0.28f), 0.f, 1.f);
         // cada um quer um tipo diferente de par
-        c.prefs.likeStrength = clampf(gauss(0.5f, 0.25f), 0.f, 1.f);
-        c.prefs.likeSmarts = clampf(gauss(0.5f, 0.25f), 0.f, 1.f);
-        c.prefs.likeSkill = clampf(gauss(0.5f, 0.25f), 0.f, 1.f);
-        c.prefs.likeSize = clampf(gauss(0.5f, 0.25f), 0.f, 1.f);
-        c.prefs.likeCalm = clampf(gauss(0.5f, 0.25f), 0.f, 1.f);
-        c.prefs.likeYoung = clampf(gauss(0.5f, 0.25f), 0.f, 1.f);
+        // cada fêmea é ÚNICA — preferências bem variadas
+        c.prefs.likeStrength = clampf(gauss(0.5f, 0.35f), 0.f, 1.f);
+        c.prefs.likeSmarts = clampf(gauss(0.5f, 0.35f), 0.f, 1.f);
+        c.prefs.likeSkill = clampf(gauss(0.5f, 0.35f), 0.f, 1.f);
+        c.prefs.likeSize = clampf(gauss(0.5f, 0.35f), 0.f, 1.f);
+        c.prefs.likeCalm = clampf(gauss(0.5f, 0.35f), 0.f, 1.f);
+        c.prefs.likeYoung = clampf(gauss(0.5f, 0.35f), 0.f, 1.f);
+        c.prefs.likeHair = clampf(gauss(0.5f, 0.4f), 0.f, 1.f);
+        c.prefs.likeVoice = clampf(gauss(0.5f, 0.4f), 0.f, 1.f);
+        c.prefs.likeGenerosity = clampf(gauss(0.5f, 0.4f), 0.f, 1.f);
+        c.prefs.likeCourage = clampf(gauss(0.5f, 0.4f), 0.f, 1.f);
+        c.prefs.likeLoyalty = clampf(gauss(0.5f, 0.4f), 0.f, 1.f);
+        c.prefs.likeHumor = clampf(gauss(0.5f, 0.4f), 0.f, 1.f);
+        c.prefs.likeWealth = clampf(gauss(0.5f, 0.4f), 0.f, 1.f);
         creatures_.push_back(c);
         made++;
     }
@@ -696,7 +785,10 @@ void CreatureSim::evolveFromAnimal(float x, float y, float speed, float size, fl
     c.g.robustness = clampf(gauss(0.55f, 0.12f), 0.15f, 0.9f);
     c.g.lifespan = clampf(lifespan + 3.f, 7.f, 15.f);
     c.g.aggression = clampf(gauss(0.25f, 0.1f), 0.05f, 0.85f);
-    c.g.intelligence = clampf(gauss(0.4f, 0.12f), 0.15f, 0.9f); // animais que viram pensantes já eram espertos
+    // primeiro pensante: bem primitivo
+    c.g.intelligence = clampf(gauss(0.3f, 0.08f), 0.1f, 0.5f);
+    c.culturalLevel = 0;
+    c.tool = 0;
     // pensantes nascem com curiosidade
     c.k.plant_value = clampf(gauss(0.7f, 0.08f), 0.4f, 0.95f);
     c.k.discrimination = clampf(gauss(0.2f, 0.05f), 0.f, 0.5f);
@@ -947,7 +1039,9 @@ bool CreatureSim::tryDrink(Creature& c, float dt) {
     scanWater(c, bx, by, found);
     (void)foundf;
     if (!found) {
+        // sem água por perto: vagueia, não entra em loop
         c.state = CState::Wander;
+        wander(c, dt);
         return false;
     }
     float d = dist2(c.x, c.y, bx, by);
@@ -955,9 +1049,13 @@ bool CreatureSim::tryDrink(Creature& c, float dt) {
         moveToward(c, bx, by, dt);
         return false;
     }
-    c.hydration = clampf(c.hydration + 35.f * dt, 0.f, 100.f);
+    // bebe rápido — hidrata de verdade
+    c.hydration = clampf(c.hydration + 55.f * dt, 0.f, 100.f);
     c.state = CState::Drink;
-    if (c.hydration > 85.f) c.state = CState::Wander;
+    if (c.hydration > 80.f) {
+        c.state = CState::Rest;
+        c.stateT = 2.f; // descansa um pouco depois de beber
+    }
     return true;
 }
 
@@ -1061,6 +1159,36 @@ Creature CreatureSim::makeChild(const Creature& a, const Creature& b) {
     c.g.aggression = clampf(gauss((a.g.aggression + b.g.aggression) * 0.5f, 0.08f), 0.05f, 0.95f);
     c.g.intelligence = clampf(gauss((a.g.intelligence + b.g.intelligence) * 0.55f, 0.06f), 0.05f, 1.f);
     c.morality = clampf(gauss((a.morality + b.morality) * 0.5f, 0.12f), 0.05f, 0.95f);
+    // corpo e mente: herança + mutação
+    c.body.strength = clampf(gauss((a.body.strength + b.body.strength) * 0.5f, 0.12f), 0.05f, 1.f);
+    c.body.endurance = clampf(gauss((a.body.endurance + b.body.endurance) * 0.5f, 0.12f), 0.05f, 1.f);
+    c.body.agility = clampf(gauss((a.body.agility + b.body.agility) * 0.5f, 0.12f), 0.05f, 1.f);
+    c.body.health = 1.f;
+    c.mind.wisdom = clampf((a.mind.wisdom + b.mind.wisdom) * 0.5f, 0.f, 1.f);
+    c.mind.memory = clampf(gauss((a.mind.memory + b.mind.memory) * 0.5f, 0.1f), 0.05f, 1.f);
+    c.mind.creativity = clampf(gauss((a.mind.creativity + b.mind.creativity) * 0.5f, 0.15f), 0.f, 1.f);
+    c.mind.willpower = clampf(gauss((a.mind.willpower + b.mind.willpower) * 0.5f, 0.12f), 0.05f, 1.f);
+    // nível cultural: filho herda o dos pais + evolução lenta
+    c.culturalLevel = std::max(a.culturalLevel, b.culturalLevel);
+    if (chance(0.15f)) c.culturalLevel = clampf(c.culturalLevel + 1, 0, 10);
+    float eraBonus = std::min(c.culturalLevel * 0.04f, 0.4f);
+    c.g.intelligence = clampf(c.g.intelligence + eraBonus, 0.05f, 1.f);
+    // ferramenta herdada (só se já tem nível cultural mínimo)
+    if ((a.tool > 0 || b.tool > 0) && c.culturalLevel >= 1) {
+        int best = std::max(a.tool, b.tool);
+        if (chance(0.5f)) c.tool = best;
+    }
+    // escrita: herda ideias registradas em pedra dos pais
+    for (auto& idea : a.writtenIdeas) {
+        if (chance(0.3f) && !c.findIdea(idea.text)) {
+            c.formIdea(idea.kind, idea.text, idea.strength * 0.7f, currentDay_, idea.morality);
+        }
+    }
+    for (auto& idea : b.writtenIdeas) {
+        if (chance(0.3f) && !c.findIdea(idea.text)) {
+            c.formIdea(idea.kind, idea.text, idea.strength * 0.7f, currentDay_, idea.morality);
+        }
+    }
     // personalidade: herança + acaso (ninguém é cópia)
     auto mix = [](float x, float y, float noise) {
         return clampf((x + y) * 0.5f + gauss(0.f, noise), 0.f, 1.f);
@@ -1079,6 +1207,13 @@ Creature CreatureSim::makeChild(const Creature& a, const Creature& b) {
     c.prefs.likeSize = clampf(gauss((a.prefs.likeSize + b.prefs.likeSize) * 0.5f, 0.15f), 0.f, 1.f);
     c.prefs.likeCalm = clampf(gauss((a.prefs.likeCalm + b.prefs.likeCalm) * 0.5f, 0.15f), 0.f, 1.f);
     c.prefs.likeYoung = clampf(gauss((a.prefs.likeYoung + b.prefs.likeYoung) * 0.5f, 0.15f), 0.f, 1.f);
+    c.prefs.likeHair = clampf(gauss((a.prefs.likeHair + b.prefs.likeHair) * 0.5f, 0.2f), 0.f, 1.f);
+    c.prefs.likeVoice = clampf(gauss((a.prefs.likeVoice + b.prefs.likeVoice) * 0.5f, 0.2f), 0.f, 1.f);
+    c.prefs.likeGenerosity = clampf(gauss((a.prefs.likeGenerosity + b.prefs.likeGenerosity) * 0.5f, 0.2f), 0.f, 1.f);
+    c.prefs.likeCourage = clampf(gauss((a.prefs.likeCourage + b.prefs.likeCourage) * 0.5f, 0.2f), 0.f, 1.f);
+    c.prefs.likeLoyalty = clampf(gauss((a.prefs.likeLoyalty + b.prefs.likeLoyalty) * 0.5f, 0.2f), 0.f, 1.f);
+    c.prefs.likeHumor = clampf(gauss((a.prefs.likeHumor + b.prefs.likeHumor) * 0.5f, 0.2f), 0.f, 1.f);
+    c.prefs.likeWealth = clampf(gauss((a.prefs.likeWealth + b.prefs.likeWealth) * 0.5f, 0.2f), 0.f, 1.f);
 
     // heranca de conhecimento (ensino + instinto)
     c.k.plant_value = clampf((a.k.plant_value + b.k.plant_value) * 0.5f + gauss(0.f, 0.05f), 0.f, 1.f);
@@ -1344,14 +1479,15 @@ void CreatureSim::behavior(Creature& c, float dt, unsigned day) {
         return;
     }
 
-    // 2) vingança: a raiva é mais forte que a fome
-    if (c.em.anger > 0.45f && c.em.wrathTarget >= 0 && c.energy > 25.f) {
+    // 2) vingança: a raiva é mais forte que a fome — mas força de vontade controla
+    if (c.em.anger > 0.45f && c.em.wrathTarget >= 0 && c.energy > 25.f &&
+        c.mind.willpower > 0.3f) {
         seekRevenge(c, dt, day);
         return;
     }
 
-    // 3) terror
-    if (c.em.fear > 0.6f) {
+    // 3) terror — mas força de vontade resiste
+    if (c.em.fear > 0.6f && c.mind.willpower < 0.6f) {
         float px, py;
         int tid = -1;
         if (findThreat(c, px, py, tid)) {
@@ -1451,11 +1587,68 @@ void CreatureSim::behavior(Creature& c, float dt, unsigned day) {
                     c.em.loneliness = clampf(c.em.loneliness - 0.3f * dt, 0.f, 1.f);
                     c.em.satisfaction = clampf(c.em.satisfaction + 0.1f * dt, 0.f, 1.f);
                     // constrói se tem ferramenta
-                    if (c.k.tool_skill > 0.25f && !comm->hasFire && c.k.fire_knowledge > 0.1f &&
+                    if (c.k.tool_skill > 0.25f && !comm->hasFire() && c.k.fire_knowledge > 0.1f &&
                         chance(0.02f * dt)) {
-                        comm->hasFire = true;
+                        Building b; b.type = 0; b.x = comm->x; b.y = comm->y;
+                        comm->buildings.push_back(b);
                         addEvent(c.name + " acendeu fogueira em " + comm->name + ".");
                         c.state = CState::Build;
+                    }
+                    // cria ferramenta física (só se nível cultural permite)
+                    if (c.tool == 0 && c.k.tool_skill > 0.3f && c.culturalLevel >= 1 && chance(0.015f * dt)) {
+                        if (c.k.fire_knowledge > 0.2f) c.tool = 1; // faca
+                        else c.tool = 2; // cesto
+                        addEvent(c.name + " criou uma ferramenta.");
+                    }
+                    // ferramenta melhor: enxada (agricultura)
+                    if (c.tool == 2 && c.k.tool_skill > 0.5f && c.culturalLevel >= 2 && chance(0.008f * dt)) {
+                        c.tool = 4;
+                        addEvent(c.name + " criou uma enxada. Pode plantar!");
+                    }
+                    // ferramenta melhor: arma
+                    if (c.tool == 1 && c.g.aggression > 0.4f && c.k.tool_skill > 0.4f && c.culturalLevel >= 2 && chance(0.005f * dt)) {
+                        c.tool = 3;
+                        addEvent(c.name + " criou uma arma.");
+                    }
+                    // agricultura: planta de propósito com enxada (era agrícola)
+                    if (c.tool == 4 && c.culturalLevel >= 3 && chance(0.02f * dt)) {
+                        int tx = (int)c.x, ty = (int)c.y;
+                        if (world_.inBounds(tx, ty) && world_.at(tx, ty).plant.kind == PlantKind::None) {
+                            TileData& t = world_.at(tx, ty);
+                            if (t.type == Tile::Grass || t.type == Tile::Soil || t.type == Tile::Forest) {
+                                PlantKind k = c.k.antidote > 0.3f ? PlantKind::Fruit : PlantKind::Fruit;
+                                world_.spawnPlant(tx, ty, k, 0);
+                                addEvent(c.name + " plantou uma semente. (agricultura!)");
+                            }
+                        }
+                    }
+                    // cerimônia: reforça ideias do grupo
+                    if (comm->hasFire() && !comm->groupIdeas.empty() && chance(0.01f * dt)) {
+                        for (int id : comm->memberIds) {
+                            Creature* m = get(id);
+                            if (!m || !m->alive()) continue;
+                            if (dist2(c.x, c.y, m->x, m->y) > 9.f) continue;
+                            const Idea& gi = comm->groupIdeas[irand(0, (int)comm->groupIdeas.size() - 1)];
+                            if (Idea* mine = m->findIdea(gi.text)) {
+                                mine->strength = clampf(mine->strength + 0.08f, 0.f, 1.f);
+                            }
+                            Bond& bb = c.ensureBond(m->id, currentDay_);
+                            bb.trust = clampf(bb.trust + 0.05f, -1.f, 1.f);
+                        }
+                        c.em.satisfaction = clampf(c.em.satisfaction + 0.15f, 0.f, 1.f);
+                        c.state = CState::Gather;
+                    }
+                    // escrita: registra ideia forte em "pedra" (era da escrita)
+                    if (!c.ideas.empty() && c.g.intelligence > 0.45f && c.culturalLevel >= 4 && chance(0.005f * dt)) {
+                        const Idea& best = c.ideas[irand(0, (int)c.ideas.size() - 1)];
+                        if (best.strength > 0.5f && (int)c.writtenIdeas.size() < 8) {
+                            bool dup = false;
+                            for (auto& wi : c.writtenIdeas) if (wi.text == best.text) { dup = true; break; }
+                            if (!dup) {
+                                c.writtenIdeas.push_back(best);
+                                addEvent(c.name + " registrou: \"" + best.text + "\"");
+                            }
+                        }
                     }
                 }
                 return;
@@ -1577,23 +1770,27 @@ void CreatureSim::behavior(Creature& c, float dt, unsigned day) {
         return;
     }
 
-    // 6) sede
-    if (c.hydration < 28.f) {
+    // 6) sede — bebe ANTES de ter sede demais, evita loop
+    if (c.hydration < 45.f) {
         c.state = CState::SeekWater;
         tryDrink(c, dt);
+        // se bebeu o suficiente, não volta pra sede imediatamente
+        if (c.hydration > 70.f) {
+            // hidratado: agora pode comer em paz
+        }
         return;
     }
 
-    // 7) fome — ganancioso come mais cedo; contradito só come se quase morrendo
-    float eatUrgency = c.energy < (30.f + c.pers.greed * 25.f);
+    // 7) fome — come antes de morrer de fome
+    float eatUrgency = c.energy < (35.f + c.pers.greed * 25.f);
     if (c.energy < 15.f) {
         c.state = CState::Rest;
         c.energy += 4.f * dt;
         if (c.energy > 32.f) c.state = CState::Wander;
         return;
     }
-    if (eatUrgency || (c.energy < 45.f && c.pers.greed > 0.4f) ||
-        (c.energy < 70.f && c.k.plant_value > 0.4f && c.pers.greed > 0.6f)) {
+    if (eatUrgency || (c.energy < 55.f && c.pers.greed > 0.4f) ||
+        (c.energy < 75.f && c.k.plant_value > 0.4f && c.pers.greed > 0.6f)) {
         // se tem cadáver por perto e está com medo, prefere carne morta (mais seguro)
         float cx, cy;
         bool hasCorpse = false;
@@ -1644,7 +1841,27 @@ void CreatureSim::behavior(Creature& c, float dt, unsigned day) {
 void CreatureSim::updateOne(Creature& c, float dt, unsigned day) {
     updateEmotions(c, dt, day);
 
+    // doença: densidade alta + higiene zero = epidemia
+    if (c.sick_ > 0.f) {
+        c.sick_ -= dt;
+        c.energy -= 0.3f * dt;
+        if (c.sick_ <= 0.f) {
+            addEvent(c.name + " se recuperou da doença.");
+        }
+    }
+
     c.age += dt / SECONDS_PER_DAY;
+    // corpo e mente crescem com a idade
+    float ageFactor = clampf(c.age / c.g.lifespan, 0.f, 1.f);
+    c.body.strength = clampf(c.body.strength + 0.003f * dt * (1.f - ageFactor * 0.5f), 0.f, 1.f);
+    c.body.endurance = clampf(c.body.endurance + 0.002f * dt * (1.f - ageFactor * 0.5f), 0.f, 1.f);
+    c.body.agility = clampf(c.body.agility - 0.001f * dt * ageFactor, 0.f, 1.f); // perde com idade
+    c.mind.wisdom = clampf(c.mind.wisdom + 0.004f * dt, 0.f, 1.f); // sabedoria sempre cresce
+    c.mind.memory = clampf(c.mind.memory + 0.001f * dt, 0.f, 1.f);
+    c.mind.creativity = clampf(c.mind.creativity + 0.002f * dt * (1.f - ageFactor * 0.3f), 0.f, 1.f);
+    // saúde: influenciada por doença e bem-estar
+    if (c.sick_ > 0.f) c.body.health = clampf(c.body.health - 0.01f * dt, 0.f, 1.f);
+    else c.body.health = clampf(c.body.health + 0.002f * dt, 0.f, 1.f);
     if (c.age > c.g.lifespan) {
         c.energy = 0.f;
         c.state = CState::Dead;
@@ -1654,6 +1871,10 @@ void CreatureSim::updateOne(Creature& c, float dt, unsigned day) {
     }
 
     float drain = 0.62f * c.g.metabolism;
+    // corpo resistente gasta menos
+    drain *= (1.2f - c.body.endurance * 0.4f);
+    // saúde baixa = gasta mais
+    if (c.body.health < 0.5f) drain *= 1.3f;
     if (c.state == CState::Wander || c.state == CState::SeekFood ||
         c.state == CState::SeekWater || c.state == CState::SeekMate ||
         c.state == CState::Fight || c.state == CState::SeekShelter) {
@@ -1695,6 +1916,37 @@ void CreatureSim::update(float dt, unsigned day) {
     currentDay_ = day;
     teachNearby(dt);
     updateCommunities(dt, day);
+
+    // era cultural: sobe com gerações totais
+    totalGens_ = births_;
+    int newEra = 0;
+    if (totalGens_ > 5) newEra = 1;   // fogo
+    if (totalGens_ > 15) newEra = 2;  // ferramentas
+    if (totalGens_ > 40) newEra = 3;  // agricultura
+    if (totalGens_ > 80) newEra = 4;  // escrita
+    if (totalGens_ > 150) newEra = 5; // civilização
+    if (newEra > culturalEra_) {
+        culturalEra_ = newEra;
+        addEvent("=== " + std::string(culturalEraName()) + " ===");
+    }
+
+    // DOENÇA: densidade alta + pouca higiene → epidemia
+    for (auto& c : creatures_) {
+        if (!c.alive() || c.sick_ > 0.f) continue;
+        int neighbors = 0;
+        for (auto& o : creatures_) {
+            if (o.id == c.id || !o.alive()) continue;
+            if (dist2(c.x, c.y, o.x, o.y) < 9.f) neighbors++;
+        }
+        // mais gente por perto = mais chance de doença
+        float density = (float)neighbors / 9.f;
+        float chance_ = 0.00008f * density * (1.f - c.g.robustness * 0.5f);
+        if (world_.isNight()) chance_ *= 1.3f; // noite facilita
+        if (chance(chance_)) {
+            c.sick_ = frand(20.f, 60.f);
+            addEvent(c.name + " adoeceu.");
+        }
+    }
 
     std::vector<Creature> newborns;
     for (auto& c : creatures_) {

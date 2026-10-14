@@ -15,6 +15,7 @@ struct HudState {
     unsigned day = 0;
     float dayFrac = 0.f;
     const char* phaseName = "Dia";
+    const char* seasonName = "Primavera";
     float light = 1.f;
     bool paused = false;
     float speed = 1.f;
@@ -41,6 +42,7 @@ struct HudState {
     int winW = 1280;
     int winH = 720;
     CreatureSim* sims = nullptr;
+    float camX = 0, camY = 0;
 };
 
 class Hud {

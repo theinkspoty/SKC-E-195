@@ -78,9 +78,11 @@ public:
     // ciclo dia/noite: timeOfDay 0..1 (0 = amanhecer, 0.25 = meio-dia, 0.5 = entardecer, 0.75 = noite)
     void setTimeOfDay(float t) { timeOfDay_ = t; }
     float timeOfDay() const { return timeOfDay_; }
-    float lightLevel() const;     // 0 noite .. 1 dia
+    float lightLevel() const;
     bool isNight() const { return lightLevel() < 0.35f; }
     const char* phaseName() const;
+    int currentDay() const { return day_; }
+    void setDay(int d) { day_ = d; advanceSeason(d); }
 
     // média do genoma das plantas (evolução visível)
     PlantGene averagePlantGene() const;
@@ -92,16 +94,37 @@ public:
     bool walkable(float x, float y) const;
     bool nearWater(float x, float y, float radius) const;
 
-    // métricas de ecossistema (para emergência de vida)
+    // métricas de ecossistema
     float avgBiofilm() const;
     float avgPlankton() const;
     float plantDensity(int cx, int cy, int radius) const;
     int countPlanktonRich(int minStage) const;
 
+    // ESTAÇÕES (cada uma dura ~15 dias)
+    int season() const { return season_; } // 0 primavera 1 verão 2 outono 3 inverno
+    const char* seasonName() const;
+    float seasonTemp() const;  // -1 inverno .. 0 neutro .. +1 verão
+    float seasonRain() const;  // 0 seco .. 1 chuvoso
+    void advanceSeason(int day);
+
+    // INCÊNDIOS naturais
+    void updateFires(float dt);
+    bool onFire(int x, int y) const;
+    void startFire(int x, int y);
+    int countFireTiles() const;
+
+    // POLINIZAÇÃO: insetos ajudam plantas a se reproduzirem
+    float pollination() const { return pollination_; }
+    void setPollination(float p) { pollination_ = p; }
+
 private:
     int w_, h_;
     std::vector<TileData> tiles_;
     float timeOfDay_ = 0.1f;
+    int season_ = 0;
+    int day_ = 1;
+    std::vector<uint8_t> fire_; // fogo por tile (0-15)
+    float pollination_ = 0.f;
 
     float equilibriumMoisture(Tile t) const;
     float equilibriumFertility(Tile t) const;

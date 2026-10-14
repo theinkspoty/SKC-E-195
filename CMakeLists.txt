@@ -9,6 +9,7 @@ pkg_check_modules(SDL2ALL REQUIRED sdl2 SDL2_ttf)
 
 add_executable(skc_e195
   src/main.cpp
+  src/save.cpp
   src/mundo/world.cpp
   src/animais/fauna.cpp
   src/pensantes/creature.cpp

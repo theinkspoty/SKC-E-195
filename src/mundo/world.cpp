@@ -47,7 +47,7 @@ static float fbm(float x, float y, unsigned seed) {
     return v;
 }
 
-World::World(int w, int h) : w_(w), h_(h), tiles_(w * h) {}
+World::World(int w, int h) : w_(w), h_(h), tiles_(w * h), fire_(w * h, 0) {}
 
 bool World::inBounds(int x, int y) const {
     return x >= 0 && y >= 0 && x < w_ && y < h_;
@@ -173,6 +173,101 @@ const char* World::phaseName() const {
     return "Madrugada";
 }
 
+const char* World::seasonName() const {
+    switch (season_) {
+        case 0: return "Primavera";
+        case 1: return "Verao";
+        case 2: return "Outono";
+        case 3: return "Inverno";
+        default: return "?";
+    }
+}
+
+float World::seasonTemp() const {
+    switch (season_) {
+        case 0: return 0.2f;  // primavera amena
+        case 1: return 0.8f;  // verão quente
+        case 2: return -0.1f; // outono fresco
+        case 3: return -0.8f; // inverno frio
+        default: return 0.f;
+    }
+}
+
+float World::seasonRain() const {
+    switch (season_) {
+        case 0: return 0.7f;  // primavera chuvosa
+        case 1: return 0.25f; // verão seco
+        case 2: return 0.5f;  // outono médio
+        case 3: return 0.35f; // inverno (nevado)
+        default: return 0.5f;
+    }
+}
+
+void World::advanceSeason(int day) {
+    // cada estação dura 15 dias
+    int newSeason = (day / 15) % 4;
+    if (newSeason != season_) {
+        season_ = newSeason;
+    }
+}
+
+bool World::onFire(int x, int y) const {
+    return inBounds(x, y) && fire_[y * w_ + x] > 0;
+}
+
+void World::startFire(int x, int y) {
+    if (inBounds(x, y)) fire_[y * w_ + x] = 12;
+}
+
+int World::countFireTiles() const {
+    int n = 0;
+    for (auto v : fire_) if (v > 0) n++;
+    return n;
+}
+
+void World::updateFires(float dt) {
+    // fogo se espalha pra vizinho com planta/grama, e apaga sozinho
+    std::vector<int> toLight;
+    for (int y = 0; y < h_; y++) {
+        for (int x = 0; x < w_; x++) {
+            int i = y * w_ + x;
+            if (fire_[i] == 0) continue;
+            fire_[i]--;
+            TileData& t = tiles_[i];
+            // queima planta
+            if (t.plant.kind != PlantKind::None && chance(0.15f)) {
+                t.plant = Plant{};
+                t.fertility = clampf(t.fertility + 0.08f, 0.f, 1.f);
+                t.nutrients = clampf(t.nutrients + 0.06f, 0.f, 1.f);
+            }
+            // fogo espalha pra vizinho com combustível
+            if (chance(0.12f)) {
+                int nx = x + irand(-1, 1);
+                int ny = y + irand(-1, 1);
+                if (inBounds(nx, ny)) {
+                    int ni = ny * w_ + nx;
+                    if (fire_[ni] == 0) {
+                        Tile tt = tiles_[ni].type;
+                        bool fuel = (tt == Tile::Forest || tt == Tile::Grass || tt == Tile::Soil);
+                        if (fuel && tiles_[ni].plant.kind != PlantKind::None) {
+                            toLight.push_back(ni);
+                        }
+                    }
+                }
+            }
+            // fogo morre
+            if (fire_[i] == 0) {
+                t.fertility = clampf(t.fertility + 0.05f, 0.f, 1.f);
+            }
+        }
+    }
+    for (int i : toLight) fire_[i] = 10;
+}
+
+// relâmpago natural: raro, mas acontece em tempestades
+static bool g_lightning = false;
+void triggerLightning() { g_lightning = true; }
+
 PlantGene World::averagePlantGene() const {
     PlantGene avg;
     double g = 0, y = 0, tox = 0, hard = 0;
@@ -209,6 +304,45 @@ int World::curePlantCount() const {
 
 void World::update() {
     float light = lightLevel();
+    float temp = seasonTemp();    // estação
+    float rain = seasonRain();
+
+    // chuva natural da estação
+    if (chance(0.0008f * rain)) {
+        int rx = irand(0, w_ - 1);
+        int ry = irand(0, h_ - 1);
+        // apaga fogo e molha
+        for (int dy = -2; dy <= 2; dy++)
+            for (int dx = -2; dx <= 2; dx++)
+                if (inBounds(rx + dx, ry + dy)) {
+                    fire_[(ry + dy) * w_ + (rx + dx)] = 0;
+                    TileData& t = at(rx + dx, ry + dy);
+                    t.moisture = clampf(t.moisture + 0.15f, 0.f, 1.f);
+                    t.nutrients = clampf(t.nutrients + 0.02f, 0.f, 1.f);
+                }
+    }
+
+    // relâmpago natural (raro, mais em verão seco)
+    float lightningChance = 0.00002f + (temp > 0.5f ? 0.00004f : 0.f);
+    if (chance(lightningChance)) {
+        for (int i = 0; i < 40; i++) {
+            int x = irand(0, w_ - 1);
+            int y = irand(0, h_ - 1);
+            if (at(x, y).type == Tile::Forest && at(x, y).plant.kind != PlantKind::None) {
+                startFire(x, y);
+                break;
+            }
+        }
+    }
+
+    updateFires(1.f);
+
+    // polinização: plantas maduras liberam polinizadores
+    if (season_ == 0 || season_ == 1) { // primavera/verão
+        pollination_ = clampf(pollination_ + 0.0001f, 0.f, 1.f);
+    } else {
+        pollination_ = clampf(pollination_ - 0.0002f, 0.f, 1.f);
+    }
     for (int y = 0; y < h_; y++) {
         for (int x = 0; x < w_; x++) {
             TileData& t = at(x, y);
@@ -299,11 +433,15 @@ void World::update() {
                     if (p.stage > 0) p.stage--;
                     else p.kind = PlantKind::None;
                 } else if (p.stage < 2 && t.moisture > 0.2f && t.fertility > 0.15f) {
-                    // fotossíntese: cresce de dia — 1 estágio leva ~1 dia
+                    // fotossíntese: cresce de dia, afetada por estação
                     float g = 0.00022f * t.moisture * (0.4f + t.fertility + t.fert_bonus);
                     g *= p.gene.growth;
                     g *= (0.05f + light * 0.95f);
                     g *= (1.f + t.plankton * 0.15f);
+                    // estação: inverno quase não cresce, verão acelera
+                    g *= clampf(0.3f + temp * 0.7f, 0.1f, 1.5f);
+                    // polinização ajuda frutificar
+                    g *= (1.f + pollination_ * 0.3f);
                     if (chance(g)) p.stage++;
                 }
                 if (p.stage == 2 && chance(0.00003f * p.gene.growth)) {
@@ -311,7 +449,8 @@ void World::update() {
                     p.stage = 0;
                 }
                 // semente com genoma mutado
-                if (p.stage == 2 && chance(0.00005f + p.gene.expansion * 0.0001f)) {
+                float spreadBoost = 1.f + pollination_ * 0.5f; // polinizadores ajudam
+                if (p.stage == 2 && chance((0.00005f + p.gene.expansion * 0.0001f) * spreadBoost)) {
                     int sx = x + irand(-4, 4);
                     int sy = y + irand(-4, 4);
                     if (inBounds(sx, sy)) {
@@ -358,6 +497,8 @@ void World::update() {
                 float g = 0.000012f * nearParent * t.moisture * t.fertility * (1.f + t.fert_bonus * 3.f);
                 g *= (0.2f + light * 0.8f);
                 g *= (1.f + shore);
+                g *= (1.f + pollination_ * 0.4f); // polinização facilita
+                g *= clampf(0.3f + temp * 0.7f, 0.1f, 1.5f);
                 if (chance(g)) {
                     PlantGene gene;
                     gene.growth = clampf(gauss(1.f, 0.1f), 0.4f, 2.f);

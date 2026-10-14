@@ -123,8 +123,12 @@ void Hud::draw(SDL_Renderer* r, const HudState& st) {
     if (st.eco) {
         text(r, font_, 150, 8, eraName(st.eco->era()), {255, 210, 130, 255});
     }
-    snprintf(buf, sizeof(buf), "Dia %u  %s  %d%%   Vivos %d   FPS %d   %s x%.0f",
-             st.day, st.phaseName, (int)(st.dayFrac * 100.f),
+    // era cultural dos pensantes
+    if (st.sims && st.sims->totalGenerations() > 0) {
+        text(r, font_, 300, 8, st.sims->culturalEraName(), {180, 220, 180, 255});
+    }
+    snprintf(buf, sizeof(buf), "Dia %u  %s  %s  %d%%   Vivos %d   FPS %d   %s x%.0f",
+             st.day, st.phaseName, st.seasonName, (int)(st.dayFrac * 100.f),
              st.creatureCount, st.fps, st.paused ? "PAUSADO" : "ok", st.speed);
     text(r, font_, 14, 28, buf, {200, 210, 220, 255});
 
@@ -149,10 +153,10 @@ void Hud::draw(SDL_Renderer* r, const HudState& st) {
         y += 34;
     }
 
-    // ============ PAINEL ESQUERDO: seleção (não sobrepõe) ============
+    // ============ PAINEL ESQUERDO: seleção ============
     if (st.selected) {
         const Creature& c = *st.selected;
-        const int ph = 760;
+        const int ph = 420; // altura fixa, não gigante
         panel(r, leftX, y, leftW, ph, 200);
         int ty = y + 8;
         int px = leftX + 12;
@@ -160,7 +164,8 @@ void Hud::draw(SDL_Renderer* r, const HudState& st) {
         snprintf(line, sizeof(line), "%s  (%s)", c.fullName().c_str(), c.male ? "macho ♂" : "femea ♀");
         text(r, fontBig_, px, ty, line, c.male ? SDL_Color{180, 210, 255, 255} : SDL_Color{255, 180, 210, 255});
         ty += 22;
-        snprintf(line, sizeof(line), "%s   %.1f dias   filhos %d   intel %.2f", stateName(c.state), c.age, c.children, c.g.intelligence);
+        snprintf(line, sizeof(line), "%s   %.1f dias   filhos %d   intel %.2f   era %d",
+                 stateName(c.state), c.age, c.children, c.g.intelligence, c.culturalLevel);
         text(r, font_, px, ty, line, {200, 210, 220, 255});
         ty += 20;
 
@@ -214,6 +219,17 @@ void Hud::draw(SDL_Renderer* r, const HudState& st) {
         emo("orgulho", c.em.pride, {140, 200, 220, 255});
         emo("conforto", c.em.comfort, {120, 210, 140, 255});
         emo("solidao", c.em.loneliness, {150, 150, 170, 255});
+
+        text(r, fontSmall_, px, ty, "CORPO E MENTE", {200, 180, 160, 255});
+        ty += 13;
+        snprintf(line, sizeof(line), "forca %.2f  resis %.2f  agil %.2f  saude %.2f",
+                 c.body.strength, c.body.endurance, c.body.agility, c.body.health);
+        text(r, fontSmall_, px, ty, line, {190, 175, 160, 255});
+        ty += 12;
+        snprintf(line, sizeof(line), "sabedoria %.2f  memoria %.2f  criativ %.2f  forcaVont %.2f",
+                 c.mind.wisdom, c.mind.memory, c.mind.creativity, c.mind.willpower);
+        text(r, fontSmall_, px, ty, line, {170, 190, 210, 255});
+        ty += 14;
 
         // moral e reputação
         ty += 4;
@@ -289,15 +305,26 @@ void Hud::draw(SDL_Renderer* r, const HudState& st) {
             }
         }
 
-        // preferências de par (o que ela/e acha atraente)
-        snprintf(line, sizeof(line), "gosta de: forca %.2f  mentes %.2f  habs %.2f",
-                 c.prefs.likeStrength, c.prefs.likeSmarts, c.prefs.likeSkill);
-        text(r, fontSmall_, px, ty, line, {200, 170, 200, 255});
+        // preferências de par
+        ty += 2;
+        text(r, fontSmall_, px, ty, "O QUE ELA/E QUER NO PAR", {220, 160, 200, 255});
         ty += 13;
-        snprintf(line, sizeof(line), "         porte %.2f  calma %.2f  juventude %.2f",
-                 c.prefs.likeSize, c.prefs.likeCalm, c.prefs.likeYoung);
+        snprintf(line, sizeof(line), "forca %.2f  mentes %.2f  habs %.2f  porte %.2f",
+                 c.prefs.likeStrength, c.prefs.likeSmarts, c.prefs.likeSkill, c.prefs.likeSize);
         text(r, fontSmall_, px, ty, line, {200, 170, 200, 255});
-        ty += 15;
+        ty += 12;
+        snprintf(line, sizeof(line), "calma %.2f  juventude %.2f  cabelo %.2f",
+                 c.prefs.likeCalm, c.prefs.likeYoung, c.prefs.likeHair);
+        text(r, fontSmall_, px, ty, line, {200, 170, 200, 255});
+        ty += 12;
+        snprintf(line, sizeof(line), "voz %.2f  genio %.2f  coragem %.2f",
+                 c.prefs.likeVoice, c.prefs.likeGenerosity, c.prefs.likeCourage);
+        text(r, fontSmall_, px, ty, line, {200, 170, 200, 255});
+        ty += 12;
+        snprintf(line, sizeof(line), "lealdade %.2f  humor %.2f  riqueza %.2f",
+                 c.prefs.likeLoyalty, c.prefs.likeHumor, c.prefs.likeWealth);
+        text(r, fontSmall_, px, ty, line, {200, 170, 200, 255});
+        ty += 14;
         // ensinamentos recebidos
         if (!c.teachings.empty()) {
             text(r, fontSmall_, px, ty, "ENSINAMENTOS", {180, 220, 180, 255});
@@ -367,13 +394,14 @@ void Hud::draw(SDL_Renderer* r, const HudState& st) {
             if (Community* comm = st.sims->community(c.communityId)) {
                 text(r, fontSmall_, px, ty, "COMUNIDADE", {120, 230, 160, 255});
                 ty += 13;
-                snprintf(line, sizeof(line), "%s (%d membros)", comm->name.c_str(), comm->size());
+                snprintf(line, sizeof(line), "%s (%d membros, %d construções)",
+                         comm->name.c_str(), comm->size(), comm->totalBuildings());
                 text(r, fontSmall_, px, ty, line, {160, 220, 170, 255});
                 ty += 12;
                 snprintf(line, sizeof(line), "%s%s%s  ideias do grupo: %d",
-                         comm->hasFire ? "fogueira " : "",
-                         comm->hasHut ? "toca " : "",
-                         (!comm->hasFire && !comm->hasHut) ? "acampamento" : "",
+                         comm->hasFire() ? "fogueira " : "",
+                         comm->hasHut() ? "toca " : "",
+                         (!comm->hasFire() && !comm->hasHut()) ? "acampamento" : "",
                          (int)comm->groupIdeas.size());
                 text(r, fontSmall_, px, ty, line, {140, 200, 150, 255});
                 ty += 14;
@@ -395,7 +423,7 @@ void Hud::draw(SDL_Renderer* r, const HudState& st) {
         y += ph + 8;
     } else if (st.selectedFauna && st.selectedFauna->alive()) {
         const Fauna& f = *st.selectedFauna;
-        const int ph = 155;
+        const int ph = 170;
         panel(r, leftX, y, leftW, ph, 200);
         int px = leftX + 12;
         char line[256];
@@ -410,6 +438,9 @@ void Hud::draw(SDL_Renderer* r, const HudState& st) {
         snprintf(line, sizeof(line), "vel %.2f  vis %.1f  porte %.2f  aggro %.2f",
                  f.g.speed, f.g.vision, f.g.size, f.g.aggression);
         text(r, fontSmall_, px, y + 82, line, {170, 180, 195, 255});
+        // nicho
+        std::string niche = Ecosystem::nicheOf(f);
+        text(r, fontSmall_, px, y + 96, niche.c_str(), {140, 200, 160, 255});
         // medo aprendido
         if (f.fearOf[(int)FaunaType::SeaPredator] > 0.1f || f.fearOf[(int)FaunaType::LandPredator] > 0.1f ||
             f.fearOf[(int)FaunaType::SkyPredator] > 0.1f) {
@@ -426,10 +457,13 @@ void Hud::draw(SDL_Renderer* r, const HudState& st) {
     // ============ ESCADA DA VIDA ============
     if (st.showLadder && st.eco) {
         LifeLadder L = st.eco->ladder();
-        const int lh = 230;
-        // se não couber embaixo do painel, fica no topo esquerdo
+        const int lh = 200;
+        // posiciona abaixo do painel de seleção, ou no topo se não há seleção
         int ly = y;
-        if (ly + lh > winH - 90) ly = topH + 8;
+        if (st.selected) ly = y + 420 + 8;
+        else if (st.selectedFauna) ly = y + 160 + 8;
+        // se não couber, recolhe pra cima
+        if (ly + lh > winH - 80) ly = topH + 8;
         panel(r, leftX, ly, leftW, lh, 180);
         text(r, fontBig_, leftX + 8, ly + 4, eraName(st.eco->era()), {255, 210, 130, 255});
         // história em 1 linha (pode ser longa — corta)
@@ -522,6 +556,48 @@ void Hud::draw(SDL_Renderer* r, const HudState& st) {
         }
     }
 
+    // minimapa (canto inferior direito)
+    if (st.world && st.winW > 400) {
+        int mmSize = 120;
+        int mmX = st.winW - mmSize - 10;
+        int mmY = st.winH - mmSize - 75;
+        panel(r, mmX - 2, mmY - 2, mmSize + 4, mmSize + 4, 180);
+        float scaleX = (float)st.world->width() / mmSize;
+        float scaleY = (float)st.world->height() / mmSize;
+        for (int py = 0; py < mmSize; py++) {
+            for (int px = 0; px < mmSize; px++) {
+                int wx = (int)(px * scaleX);
+                int wy = (int)(py * scaleY);
+                if (!st.world->inBounds(wx, wy)) continue;
+                const TileData& t = st.world->at(wx, wy);
+                SDL_Color c = {30, 30, 40, 255};
+                switch (t.type) {
+                    case Tile::DeepWater: c = {20, 40, 80, 255}; break;
+                    case Tile::Water: c = {40, 80, 140, 255}; break;
+                    case Tile::Sand: c = {180, 160, 110, 255}; break;
+                    case Tile::Grass: c = {60, 110, 50, 255}; break;
+                    case Tile::Forest: c = {35, 80, 35, 255}; break;
+                    case Tile::Rock: c = {100, 100, 110, 255}; break;
+                    case Tile::Ice: c = {170, 200, 220, 255}; break;
+                    case Tile::Soil: c = {100, 75, 50, 255}; break;
+                    default: break;
+                }
+                // fogo
+                if (st.world->onFire(wx, wy)) c = {255, 120, 20, 255};
+                SDL_SetRenderDrawColor(r, c.r, c.g, c.b, c.a);
+                SDL_RenderDrawPoint(r, mmX + px, mmY + py);
+            }
+        }
+        // marcador da câmera
+        SDL_SetRenderDrawColor(r, 255, 255, 255, 200);
+        int cx = mmX + (int)(st.camX / scaleX);
+        int cy = mmY + (int)(st.camY / scaleY);
+        if (cx >= mmX && cx < mmX + mmSize && cy >= mmY && cy < mmY + mmSize) {
+            SDL_Rect camMark = {cx - 2, cy - 2, 4, 4};
+            SDL_RenderDrawRect(r, &camMark);
+        }
+    }
+
     // omen central
     if (st.omenT > 0.f && !st.omen.empty()) {
         Uint8 a = (Uint8)clampf(st.omenT * 70.f, 0.f, 235.f);
@@ -549,15 +625,19 @@ void Hud::draw(SDL_Renderer* r, const HudState& st) {
             "E              modo edicao de mundo",
             "  1-8 terreno, roda = raio",
             "R              mundo novo",
+            "F5 / F9        salvar / carregar",
             "L              Escada da Vida",
             "H              fechar ajuda",
             "ESC            sair",
             "scroll         zoom in/out",
+            "botao meio     arrastar mapa",
             "shift+scroll   raio da escova (no modo E)",
             "",
-            "1 dia = 3 min. Ha noite. A vida emerge sozinha.",
-            "Femeas escolhem o par. Predadores tem 3 nichos.",
-            "Voce pede. O mundo decide.",
+            "Estacoes mudam o mundo. Fogo se espalha.",
+            "Doenca em comunidade grande. Ferramentas fisicas.",
+            "Agricultura, cerimonia, guerra, escrita.",
+            "",
+            "Voce observa. O mundo se desenvolve sozinho.",
         };
         for (const char* l : lines) {
             text(r, font_, hx + 16, ty, l, {210, 215, 220, 255}, false);

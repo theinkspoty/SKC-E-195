@@ -10,13 +10,29 @@ class Ecosystem; // fwd
 
 // personalidade única — muda as decisões de TODO mundo
 struct Personality {
-    float sexuality = 0.5f;   // desejo sexual / foco em par
-    float boldness = 0.5f;    // ousado vs contradito (medroso)
-    float thinker = 0.5f;     // 0 age sem pensar .. 1 pensa antes
-    float greed = 0.5f;       // oportunista / acumulador
-    float laziness = 0.5f;    // preguiçoso vs agitado
-    float empathy = 0.5f;     // sente o outro vs egoísta
-    float wanderlust = 0.5f;  // ama explorar vs fica em casa
+    float sexuality = 0.5f;
+    float boldness = 0.5f;
+    float thinker = 0.5f;
+    float greed = 0.5f;
+    float laziness = 0.5f;
+    float empathy = 0.5f;
+    float wanderlust = 0.5f;
+};
+
+// corpo: o físico do pensante
+struct Body {
+    float strength = 0.5f;    // força bruta
+    float endurance = 0.5f;   // resistência (aguenta mais fome/sede)
+    float agility = 0.5f;     // agilidade (foge melhor)
+    float health = 1.f;       // saúde 0..1
+};
+
+// mente: a psique do pensante
+struct Mind {
+    float wisdom = 0.2f;      // sabedoria (sobe com idade + experiência)
+    float memory = 0.3f;      // memória (retém ideias melhor)
+    float creativity = 0.3f;  // criatividade (gera ideias novas)
+    float willpower = 0.5f;   // força de vontade (resiste a medo/raiva)
 };
 
 struct Genome {
@@ -40,6 +56,14 @@ struct Preferences {
     float likeSize = 0.5f;
     float likeCalm = 0.5f;
     float likeYoung = 0.5f;
+    // preferências específicas — cada fêmea é ÚNICA
+    float likeHair = 0.5f;       // "cabelo" (porte)
+    float likeVoice = 0.5f;      // voz forte (agressividade moderada)
+    float likeGenerosity = 0.5f; // generosidade (baixa ganância)
+    float likeCourage = 0.5f;    // coragem (ousadia)
+    float likeLoyalty = 0.5f;    // lealdade (moral alta)
+    float likeHumor = 0.5f;      // senso de humor (curiosidade + empatia)
+    float likeWealth = 0.5f;     // riqueza (energia + ferramentas)
 };
 
 struct Knowledge {
@@ -134,6 +158,17 @@ enum class CState {
     Dead
 };
 
+// construção: cada uma tem nível e tipo
+struct Building {
+    int type = 0;     // 0 fogueira, 1 toca, 2 casa, 3 celeiro, 4 totem, 5 muralha, 6 templo
+    float x = 0.f, y = 0.f;
+    int level = 1;    // 1 básico .. 3 avançado
+    int hp = 10;      // integridade
+};
+
+const char* buildingName(int type);
+const char* buildingDesc(int type);
+
 // comunidade fixa: a cultura ganha corpo
 struct Community {
     int id = 0;
@@ -141,10 +176,23 @@ struct Community {
     float x = 0.f, y = 0.f;
     float territoryR = 12.f;
     std::vector<int> memberIds;
-    bool hasFire = false;
-    bool hasHut = false;
     unsigned foundingDay = 0;
-    std::vector<Idea> groupIdeas; // crenças da tribo
+    std::vector<Idea> groupIdeas;
+    std::vector<Building> buildings; // construções da comunidade
+
+    // helpers
+    bool hasFire() const { return hasBuilding(0); }
+    bool hasHut() const { return hasBuilding(1); }
+    bool hasBuilding(int type) const {
+        for (auto& b : buildings) if (b.type == type) return true;
+        return false;
+    }
+    int buildingCount(int type) const {
+        int n = 0;
+        for (auto& b : buildings) if (b.type == type) n++;
+        return n;
+    }
+    int totalBuildings() const { return (int)buildings.size(); }
 
     int size() const { return (int)memberIds.size(); }
     bool hasMember(int id) const {
@@ -160,7 +208,7 @@ const char* stateName(CState s);
 struct Creature {
     int id = 0;
     std::string name;
-    std::string surname;  // herdado do pai
+    std::string surname;
     float x = 0.f, y = 0.f;
     bool male = true;
     float energy = 80.f;
@@ -169,6 +217,8 @@ struct Creature {
     Genome g;
     Knowledge k;
     Personality pers;
+    Body body;
+    Mind mind;
     Preferences prefs;
     Emotions em;
     std::vector<Bond> bonds;
@@ -178,6 +228,14 @@ struct Creature {
     int communityId = -1;
     float morality = 0.5f;
     float reputation = 0.f;
+    int culturalLevel = 0; // 0 primitivo .. avança com gerações
+
+    // ferramenta física (0 nenhuma, 1 faca, 2 cesto, 3 arma, 4 enxada)
+    int tool = 0;
+    // doença
+    float sick_ = 0.f;
+    // escrita: ideias registradas em pedra (sobrevivem à morte)
+    std::vector<Idea> writtenIdeas;
 
     void formIdea(IdeaKind kind, const std::string& text, float power, unsigned day, float morality = 0.5f);
     Idea* findIdea(const std::string& fragment);
@@ -238,14 +296,21 @@ struct Creature {
     // pontuação de atração: cada um quer algo diferente
     float attractionTo(const Creature& o) const {
         float score = 0.f;
-        score += prefs.likeStrength * (o.g.aggression * 0.5f + o.g.size * 0.2f);
+        score += prefs.likeStrength * (o.g.aggression * 0.4f + o.g.size * 0.3f);
         score += prefs.likeSmarts * (o.g.intelligence + o.g.vision * 0.05f);
         score += prefs.likeSkill * (o.k.tool_skill + o.k.fire_knowledge);
         score += prefs.likeSize * o.g.size;
         score += prefs.likeCalm * (1.f - o.g.aggression);
         score += prefs.likeYoung * (1.f - o.age / std::max(1.f, o.g.lifespan));
-        score += o.em.satisfaction * 0.1f; // quem está bem atrai
-        return score; // ~0..2
+        score += prefs.likeHair * (o.g.size * 0.3f); // maior = mais "cabelo"
+        score += prefs.likeVoice * (o.g.aggression * 0.3f);
+        score += prefs.likeGenerosity * (1.f - o.pers.greed);
+        score += prefs.likeCourage * o.pers.boldness;
+        score += prefs.likeLoyalty * o.morality;
+        score += prefs.likeHumor * (o.em.curiosity * 0.5f + o.pers.empathy * 0.5f);
+        score += prefs.likeWealth * (o.energy / 100.f + o.tool * 0.15f);
+        score += o.em.satisfaction * 0.1f;
+        return score / 7.f; // normaliza
     }
 };
 
@@ -291,6 +356,11 @@ public:
     Community* community(int id);
     void updateCommunities(float dt, unsigned day);
 
+    // nível cultural da civilização (sobe com gerações)
+    int culturalEra() const { return culturalEra_; }
+    const char* culturalEraName() const;
+    int totalGenerations() const { return totalGens_; }
+
     // dano externo (predador, briga) — ativa raiva e vínculo de rancor
     void damage(Creature& c, float amount, int attackerId, unsigned day);
 
@@ -305,6 +375,8 @@ private:
     int deaths_ = 0;
     int births_ = 0;
     unsigned currentDay_ = 1;
+    int totalGens_ = 0;    // gerações totais de pensantes
+    int culturalEra_ = 0;  // era cultural global
 
     void addEvent(const std::string& s);
     void updateOne(Creature& c, float dt, unsigned day);

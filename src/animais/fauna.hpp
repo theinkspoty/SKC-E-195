@@ -8,16 +8,17 @@ namespace skc {
 
 // ordem = ordem evolutiva (como na Terra)
 enum class FaunaType : uint8_t {
-    Medusa = 0,      // mar primitivo
-    Fish,            // peixe
-    Amphibian,       // anfíbio: mar → terra
-    Herbivore,       // terra pastando
-    Scavenger,       // carroNEIRO
-    SeaPredator,     // Piscador
-    LandPredator,    // Lobo
-    SkyPredator      // Falcon
+    Medusa = 0,
+    Fish,
+    Amphibian,
+    Herbivore,
+    Scavenger,
+    SeaPredator,
+    LandPredator,
+    SkyPredator,
+    SmallBird
 };
-constexpr int FAUNA_TYPE_COUNT = 8;
+constexpr int FAUNA_TYPE_COUNT = 9;
 
 enum class FaunaState : uint8_t {
     Idle = 0,
@@ -51,7 +52,14 @@ struct FaunaGenome {
     float vision = 5.f;
     float metabolism = 1.f;
     float lifespan = 6.f;
-    float aggression = 0.3f; // 0 dócil .. 1 violento
+    float aggression = 0.3f;
+    // NICHO: preferências genéticas que a evolução molda
+    float dietPlankton = 0.5f; // quanto prefere plâncton
+    float dietPlants = 0.5f;   // quanto prefere plantas
+    float dietMeat = 0.3f;     // quanto prefere carne
+    float habitatWet = 0.5f;   // prefere água
+    float habitatDry = 0.5f;   // prefere terra seca
+    float nocturnal = 0.3f;    // prefere caçar de noite
 };
 
 struct Fauna {
@@ -144,6 +152,7 @@ public:
     PopStats popStats() const { return pop_; }
 
     static std::string goalOf(const Fauna& f);
+    static std::string nicheOf(const Fauna& f); // descreve o nicho
 
     // predador que caça este tipo (para medo aprendido)
     static FaunaType hunterOf(FaunaType prey);
@@ -178,6 +187,8 @@ private:
     void updateSeaPredator(Fauna& f, float dt);
     void updateLandPredator(Fauna& f, float dt);
     void updateSkyPredator(Fauna& f, float dt);
+    void updateSmallBird(Fauna& f, float dt);
+    void schoolBirds(Fauna& f, float dt); // bando de passarinhos
     void huntPrey(Fauna& f, float dt, const FaunaType* preyTypes, int nPrey, float speedMul);
 
     void wanderIn(Fauna& f, float dt, bool waterOnly);

@@ -12,6 +12,7 @@
 #include "hud.hpp"
 #include "rng.hpp"
 #include "fauna.hpp"
+#include "save.hpp"
 
 using namespace skc;
 
@@ -52,6 +53,8 @@ struct Game {
     int fpsCount = 0;
     float fpsTimer = 0.f;
     bool painting = false;
+    bool panning = false; // arrastar com botão do meio
+    int panLastX = 0, panLastY = 0;
     float dayFrac = 0.1f;
     int winW = 1280, winH = 720;
 
@@ -160,6 +163,7 @@ static SDL_Color faunaColor(int type) {
         case 5: return {40, 70, 140, 255};   // piscador — azul escuro
         case 6: return {160, 55, 50, 255};   // lobo — vermelho
         case 7: return {220, 220, 240, 255}; // falcão — branco
+        case 8: return {180, 140, 80, 255};  // passarinho — marrom claro
         default: return {200, 200, 200, 255};
     }
 }
@@ -228,7 +232,7 @@ static void drawCommunities(SDL_Renderer* r, Game& g, int winW, int winH) {
         SDL_Rect terr = {sx - tr, sy - tr, tr * 2, tr * 2};
         SDL_RenderDrawRect(r, &terr);
         // toca
-        if (comm.hasHut) {
+        if (comm.hasHut()) {
             drawShadow(r, sx, sy + 2, 6);
             SDL_SetRenderDrawColor(r, 130, 100, 70, 255);
             SDL_Rect hut = {sx - 5, sy - 3, 10, 7};
@@ -244,7 +248,7 @@ static void drawCommunities(SDL_Renderer* r, Game& g, int winW, int winH) {
             SDL_RenderFillRect(r, &door);
         }
         // fogueira: chama animada + glow
-        if (comm.hasFire) {
+        if (comm.hasFire()) {
             float t = (float)SDL_GetTicks() * 0.01f;
             float pulse = 0.75f + 0.25f * std::sin(t * 3.f);
             // glow de luz (noite)
@@ -309,6 +313,15 @@ static void drawPlants(SDL_Renderer* r, Game& g, int winW, int winH) {
             const TileData& td = g.world.at(x, y);
             int sx, sy;
             worldToScreen(x + 0.5f, y + 0.5f, g.camX, g.camY, sx, sy, winW, winH, g.tilePx());
+
+            // fogo (incêndio)
+            if (g.world.onFire(x, y)) {
+                int fsz = (int)std::max(3.f, tp * 0.5f);
+                float pulse = 0.7f + 0.3f * std::sin((float)SDL_GetTicks() * 0.01f + x * 3.f + y * 7.f);
+                SDL_SetRenderDrawColor(r, (Uint8)(255 * pulse), (Uint8)(140 * pulse), 30, 255);
+                SDL_Rect fire = {sx - fsz / 2, sy - fsz / 2, fsz, fsz};
+                SDL_RenderFillRect(r, &fire);
+            }
 
             // ossos — quadrado branco
             if (td.bones > 0) {
@@ -533,6 +546,28 @@ int main(int, char**) {
                 else if (k == SDLK_h) g.showHelp = !g.showHelp;
                 else if (k == SDLK_l) g.showLadder = !g.showLadder;
                 else if (k == SDLK_e) g.editMode = !g.editMode;
+                else if (k == SDLK_F5) {
+                    std::string path = std::string(getenv("HOME") ? getenv("HOME") : ".") + "/.skc_e195_save.txt";
+                    if (saveGame(g.world, *g.sim, *g.eco, g.day, g.timeAcc, g.camX, g.camY, g.zoom, path)) {
+                        g.omen = "Mundo salvo!"; g.omenT = 2.f;
+                    } else { g.omen = "Erro ao salvar."; g.omenT = 2.f; }
+                }
+                else if (k == SDLK_F9) {
+                    std::string path = std::string(getenv("HOME") ? getenv("HOME") : ".") + "/.skc_e195_save.txt";
+                    CreatureSim* ns = nullptr;
+                    Ecosystem* ne = nullptr;
+                    GodSystem* ng = nullptr;
+                    unsigned nd; float nta, ncx, ncy, nz;
+                    if (loadGame(g.world, ns, ne, ng, nd, nta, ncx, ncy, nz, path)) {
+                        delete g.god; g.god = ng;
+                        delete g.eco; g.eco = ne;
+                        delete g.sim; g.sim = ns;
+                        g.day = nd; g.timeAcc = nta;
+                        g.camX = ncx; g.camY = ncy; g.zoom = nz;
+                        g.selectedId = -1; g.selectedFaunaId = -1;
+                        g.omen = "Mundo carregado!"; g.omenT = 2.f;
+                    } else { g.omen = "Nenhum save encontrado."; g.omenT = 2.f; }
+                }
                 else if (k == SDLK_z) g.speed = std::max(0.5f, g.speed - 0.5f);
                 else if (k == SDLK_x) g.speed = std::min(6.f, g.speed + 0.5f);
                 else if (k == SDLK_r) {
@@ -585,6 +620,25 @@ int main(int, char**) {
                         }
                     }
                 }
+            }
+            else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_MIDDLE) {
+                g.panning = true;
+                g.panLastX = e.button.x;
+                g.panLastY = e.button.y;
+            }
+            else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_MIDDLE) {
+                g.panning = false;
+            }
+            else if (e.type == SDL_MOUSEMOTION && g.panning) {
+                int dx = e.motion.x - g.panLastX;
+                int dy = e.motion.y - g.panLastY;
+                g.panLastX = e.motion.x;
+                g.panLastY = e.motion.y;
+                float tp = g.tilePx();
+                g.camX -= dx / tp;
+                g.camY -= dy / tp;
+                g.camX = clampf(g.camX, 0.f, (float)g.world.width());
+                g.camY = clampf(g.camY, 0.f, (float)g.world.height());
             }
             else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
                 if (mouseInWorld) {
@@ -649,6 +703,7 @@ int main(int, char**) {
                 }
                 g.dayFrac = g.timeAcc / SECONDS_PER_DAY;
                 g.world.setTimeOfDay(g.dayFrac);
+                g.world.setDay(g.day); // atualiza estação
             }
             // lore do ecossistema vira omen
             if (g.eco && !g.eco->lore().empty() && g.omenT <= 0.f) {
@@ -714,7 +769,7 @@ int main(int, char**) {
             // fogueiras furam a noite (círculo de luz)
             if (g.sim) {
                 for (auto& comm : g.sim->communities()) {
-                    if (!comm.hasFire) continue;
+                    if (!comm.hasFire()) continue;
                     int sx, sy;
                     worldToScreen(comm.x, comm.y, g.camX, g.camY, sx, sy, winW, winH, g.tilePx());
                     float pulse = 0.8f + 0.2f * std::sin((float)SDL_GetTicks() * 0.006f);
@@ -758,6 +813,7 @@ int main(int, char**) {
         hs.day = g.day;
         hs.dayFrac = g.dayFrac;
         hs.phaseName = g.world.phaseName();
+        hs.seasonName = g.world.seasonName();
         hs.light = light;
         hs.paused = g.paused;
         hs.speed = g.speed;
@@ -785,6 +841,8 @@ int main(int, char**) {
         hs.winW = winW;
         hs.winH = winH;
         hs.sims = g.sim;
+        hs.camX = g.camX;
+        hs.camY = g.camY;
         g.hud.draw(ren, hs);
 
         if (hs.creatureCount == 0 && !g.paused) {
