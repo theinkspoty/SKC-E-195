@@ -17,6 +17,8 @@ struct Personality {
     float laziness = 0.5f;
     float empathy = 0.5f;
     float wanderlust = 0.5f;
+    float attachment = 0.5f; // necessidade de vínculo / família
+    float optimism = 0.5f;   // tendência ao bem-estar (recupera mais rápido)
 };
 
 // corpo: o físico do pensante
@@ -84,10 +86,14 @@ struct Emotions {
     float curiosity = 0.3f;
     float comfort = 0.5f;
     float loneliness = 0.f;
-    float satisfaction = 0.f;
+    float satisfaction = 0.f; // prazer: comer, amar, aprender, criar
     float guilt = 0.f;    // fez algo errado
     float shame = 0.f;    // errado na frente dos outros
     float pride = 0.f;    // fez algo certo e foi visto
+    // ---- novos: economia de bem-estar ----
+    float happiness = 0.5f;     // felicidade geral (filhotes, amor, conforto)
+    float security = 0.5f;      // se sente seguro (casa, par, comunidade, fogo)
+    float desireFamily = 0.f;   // vontade de constituir família
     int wrathTarget = -1;
     int mateId = -1;
     float shelterX = -1.f, shelterY = -1.f;
@@ -138,6 +144,9 @@ struct Idea {
     unsigned formedDay = 0;
     int fromId = -1;
     std::string fromName;
+    bool selfTaught = true; // true = descoberta própria (experiência direta)
+
+    bool isOwnDiscovery() const { return selfTaught && fromId < 0 && fromName.empty(); }
 };
 
 enum class CState {
@@ -241,6 +250,9 @@ struct Creature {
     Idea* findIdea(const std::string& fragment);
     const Idea* findIdea(const std::string& fragment) const;
     void applyIdeas(float dt);
+    // contagem auxiliar (preenchida pelo sim quando relevante)
+    int livingChildren = 0;    // filhos vivos conhecidos
+    int totalChildrenBorn = 0; // nascidos (para detectar perda)
     CState state = CState::Wander;
     float stateT = 0.f;
     float targetX = 0.f, targetY = 0.f;
@@ -361,8 +373,11 @@ public:
     const char* culturalEraName() const;
     int totalGenerations() const { return totalGens_; }
 
-    // dano externo (predador, briga) — ativa raiva e vínculo de rancor
     void damage(Creature& c, float amount, int attackerId, unsigned day);
+    // prazer de aprender (reforço positivo)
+    void learnPleasure(Creature& c, float amount);
+    // detecta morte de filhos e avisa os pais (luto)
+    void notifyChildDeath(const Creature& child);
 
 private:
     World& world_;

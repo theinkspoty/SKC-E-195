@@ -8,8 +8,9 @@ Um mundo pixel onde a vida **emerge sozinha** quando as condições existem:
 
 ```
 Minerais + água → Microbioma → Plâncton → Medusa → Peixe
-→ Anfíbio → Herbívoro → Lobo / Carroneiro / Falcon
-→ Pensantes → Comunidades → Cultura
+→ Anfíbio → Tartaruga / Herbívoro → Piscador → Tubarão
+→ Baleia (herbívoro que volta ao mar) → Lobo → Urso
+→ Carroneiro / Falcon → Pensantes → Comunidades → Cultura
 ```
 
 Você é um deus **limitado**: pode pedir chuva, fruta, asteroide, geada — mas o mundo decide se aceita.
@@ -23,6 +24,8 @@ cmake --build build
 ```
 
 Dependências: SDL2, SDL2_ttf, CMake, g++.
+
+Debug de UI: `SKC_SHOT=/tmp/ui.bmp SKC_SMOKE_FRAMES=200 ./build/skc_e195` salva um frame.
 
 ## Controles
 
@@ -44,11 +47,12 @@ Dependências: SDL2, SDL2_ttf, CMake, g++.
 ## Sistemas
 
 - **Ecossistema**: peixes em cardume, anfíbios na margem, predadores de mar/terra/ar
+- **Evolução do nado**: terrestres perto da água mutam o gene de nado — urso pesca, baleia volta pro mar
 - **Plantas com genoma**: evoluem por sementes, veneno vs fruta, expansão de território
 - **Criaturas pensantes**: personalidade, emoções, ideias, moral, mentira, justiça
 - **Comunidades**: fogueira, toca, troca de ideias entre tribos, casamento
 - **Família**: sobrenome herdado, laços fortes, filhos herdam cultura
-- **Dia/noite**: mamíferos dormem, lobos caçam de noite, falcões pousam
+- **Dia/noite**: mamíferos dormem, lobos e tubarões caçam de noite, falcões pousam
 - **Ciclo da morte**: carne → ossos → nutrientes → nova vida
 
 ## Sprites
@@ -60,11 +64,18 @@ Criaturas e plantas são **quadrados coloridos** (pixel art procedural). Cada es
 | Peixe | azul-violeta |
 | Medusa | ciano |
 | Anfíbio | verde |
+| Tartaruga | verde-oliva |
 | Herbívoro | marrom claro |
 | Lobo | vermelho |
+| Urso | marrom escuro |
 | Falcão | branco |
+| Piscador | azul escuro |
+| Tubarão | cinza-azulado |
+| Baleia | azul-petróleo |
 | Pensante ♂ / ♀ | azul / rosa |
 | Fruta / Veneno / Cura | amarelo / roxo / dourado |
+
+Terrestres perto da água evoluem o **gene de nado** — alguns voltam pro mar e viram Baleias.
 
 ## Estrutura
 

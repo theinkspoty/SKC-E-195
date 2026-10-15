@@ -57,6 +57,7 @@ struct Game {
     int panLastX = 0, panLastY = 0;
     float dayFrac = 0.1f;
     int winW = 1280, winH = 720;
+    float uiWheel = 0.f; // roda acumulada para a UI neste frame
 
     void regenWorld() {
         unsigned seed = (unsigned)std::random_device{}();
@@ -164,6 +165,10 @@ static SDL_Color faunaColor(int type) {
         case 6: return {160, 55, 50, 255};   // lobo — vermelho
         case 7: return {220, 220, 240, 255}; // falcão — branco
         case 8: return {180, 140, 80, 255};  // passarinho — marrom claro
+        case 9: return {110, 150, 80, 255};  // tartaruga — verde-oliva
+        case 10: return {100, 110, 125, 255};// tubarão — cinza-azulado
+        case 11: return {120, 80, 50, 255};  // urso — marrom escuro
+        case 12: return {70, 95, 155, 255};  // baleia — azul-petróleo
         default: return {200, 200, 200, 255};
     }
 }
@@ -496,6 +501,9 @@ int main(int, char**) {
         smokeFrames = std::atoi(env);
         g.speed = 6.f;
     }
+    if (std::getenv("SKC_SHOT")) {
+        g.zoom = 2.5f; // close-up p/ ver criaturas no shot
+    }
     int frame = 0;
 
     while (g.running) {
@@ -505,6 +513,7 @@ int main(int, char**) {
         float dt = (float)((now - prev) / perf);
         prev = now;
         if (dt > 0.1f) dt = 0.1f;
+        g.uiWheel = 0.f;
 
         g.fpsCount++;
         g.fpsTimer += dt;
@@ -528,6 +537,8 @@ int main(int, char**) {
         SDL_GetWindowSize(win, &winWpt, &winHpt);
         float sx = (winWpt > 0) ? renW / (float)winWpt : 1.f;
         float sy = (winHpt > 0) ? renH / (float)winHpt : 1.f;
+        // escala de UI HiDPI (fontes maiores em telas densas)
+        g.hud.setUiScale(sx > 1.2f ? sx : 1.f);
 
         int rawMx, rawMy;
         SDL_GetMouseState(&rawMx, &rawMy);
@@ -665,8 +676,18 @@ int main(int, char**) {
                 g.painting = false;
             }
             else if (e.type == SDL_MOUSEWHEEL) {
+                // painéis da esquerda consomem a rola (zoom só no mundo)
+                bool overLeftUI = false;
+                {
+                    float mwxp = rawMx * sx, mwyp = rawMy * sy;
+                    (void)mwyp;
+                    if (mwxp < 320) overLeftUI = true; // coluna esquerda
+                }
+                bool hasInspect = g.selectedId >= 0 || g.selectedFaunaId >= 0;
                 if (g.editMode && (SDL_GetModState() & KMOD_SHIFT)) {
                     g.brushRadius = std::clamp(g.brushRadius + e.wheel.y, 1, 10);
+                } else if (overLeftUI && hasInspect) {
+                    g.uiWheel += (float)e.wheel.y;
                 } else {
                     // zoom com scroll
                     float z = g.zoom * (e.wheel.y > 0 ? 1.12f : 0.89f);
@@ -843,6 +864,9 @@ int main(int, char**) {
         hs.sims = g.sim;
         hs.camX = g.camX;
         hs.camY = g.camY;
+        hs.uiWheel = g.uiWheel;
+        hs.mouseWinX = mx;
+        hs.mouseWinY = my;
         g.hud.draw(ren, hs);
 
         if (hs.creatureCount == 0 && !g.paused) {
@@ -850,6 +874,32 @@ int main(int, char**) {
             if (g.omenT <= 0.f) {
                 g.omen = "Silencio. A vida espera as condicoes certas. (chuva alimenta a agua)";
                 g.omenT = 2.f;
+            }
+        }
+
+        // captura opcional: SKC_SHOT=/caminho/saida.bmp (útil para debug de UI)
+        // precisa ser ANTES do present (backbuffer ainda válido)
+        if (const char* shot = std::getenv("SKC_SHOT")) {
+            static int shotAt = -1;
+            if (shotAt < 0) shotAt = smokeFrames > 0 ? smokeFrames - 1 : 90;
+            // pouco antes do shot, seleciona alguém p/ mostrar o painel
+            if (frame == shotAt - 5 && g.selectedId < 0 && g.selectedFaunaId < 0) {
+                // prefere pensante (mostra a ficha de emoções)
+                for (auto& c : g.sim->all()) if (c.alive()) {
+                    g.selectedId = c.id; g.camX = c.x; g.camY = c.y; break;
+                }
+                if (g.selectedId < 0)
+                    for (auto& f : g.eco->all()) if (f.alive()) {
+                        g.selectedFaunaId = f.id; g.camX = f.x; g.camY = f.y; break;
+                    }
+            }
+            if (frame == shotAt) {
+                SDL_Surface* ss = SDL_CreateRGBSurfaceWithFormat(0, renW, renH, 32, SDL_PIXELFORMAT_ARGB8888);
+                if (ss) {
+                    SDL_RenderReadPixels(ren, nullptr, ss->format->format, ss->pixels, ss->pitch);
+                    SDL_SaveBMP(ss, shot);
+                    SDL_FreeSurface(ss);
+                }
             }
         }
 

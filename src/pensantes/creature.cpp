@@ -294,6 +294,29 @@ void CreatureSim::updateCommunities(float dt, unsigned day) {
     }
 }
 
+void CreatureSim::learnPleasure(Creature& c, float amount) {
+    // aprender é prazeroso — reforço positivo que motiva explorar
+    c.em.satisfaction = clampf(c.em.satisfaction + amount, 0.f, 1.f);
+    c.em.curiosity = clampf(c.em.curiosity + 0.03f, 0.f, 1.f);
+    c.em.happiness = clampf(c.em.happiness + amount * 0.3f, 0.f, 1.f);
+}
+
+void CreatureSim::notifyChildDeath(const Creature& child) {
+    for (int pid : {child.parentA, child.parentB}) {
+        if (pid < 0) continue;
+        Creature* p = get(pid);
+        if (!p || !p->alive()) continue;
+        p->em.grief = clampf(p->em.grief + 0.45f, 0.f, 1.f);
+        p->em.happiness = clampf(p->em.happiness - 0.35f, 0.f, 1.f);
+        p->em.love = clampf(p->em.love - 0.1f, 0.f, 1.f);
+        if (p->em.grief < 0.3f) {
+            addEvent(p->name + " sentiu o vazio de perder um filho.");
+            p->formIdea(IdeaKind::Love, "perder quem se ama doeu fundo", 0.55f, currentDay_, 0.45f);
+            p->formIdea(IdeaKind::Self, "a vida e fragil", 0.4f, currentDay_, 0.5f);
+        }
+    }
+}
+
 void Creature::formIdea(IdeaKind kind, const std::string& text, float power, unsigned day, float morality) {
     for (auto& idea : ideas) {
         if (idea.kind == kind && idea.text == text) {
@@ -308,8 +331,9 @@ void Creature::formIdea(IdeaKind kind, const std::string& text, float power, uns
     idea.strength = clampf(power, 0.05f, 1.f);
     idea.morality = clampf(morality, 0.f, 1.f);
     idea.formedDay = day;
+    idea.selfTaught = true; // default: descoberta própria
     ideas.push_back(idea);
-    if (ideas.size() > 12) {
+    if (ideas.size() > 18) {
         auto weakest = std::min_element(ideas.begin(), ideas.end(),
             [](const Idea& a, const Idea& b) { return a.strength < b.strength; });
         ideas.erase(weakest);
@@ -348,18 +372,20 @@ void Creature::applyIdeas(float dt) {
     em.shame = clampf(em.shame - 0.02f * dt, 0.f, 1.f);
     em.pride = clampf(em.pride - 0.025f * dt, 0.f, 1.f);
 
+    // ideias moldam emoções de forma contínua
     if (const Idea* i = findIdea("lobo")) {
         if (i->text.find("inimigo") != std::string::npos || i->text.find("perigo") != std::string::npos)
             em.fear = clampf(em.fear + i->strength * 0.03f * dt, 0.f, 1.f);
     }
     if (const Idea* i = findIdea("juntos")) {
         em.loneliness = clampf(em.loneliness - i->strength * 0.06f * dt, 0.f, 1.f);
+        em.security = clampf(em.security + i->strength * 0.02f * dt, 0.f, 1.f);
     }
     if (const Idea* i = findIdea("amar")) {
         if (i->text.find("doe") != std::string::npos || i->text.find("machuca") != std::string::npos)
-            em.love = clampf(em.love - i->strength * 0.02f * dt, 0.f, 1.f);
+            em.love = clampf(em.love - i->strength * 0.015f * dt, 0.f, 1.f);
         else
-            em.love = clampf(em.love + i->strength * 0.02f * dt, 0.f, 1.f);
+            em.love = clampf(em.love + i->strength * 0.025f * dt, 0.f, 1.f);
     }
     if (const Idea* i = findIdea("comida")) {
         if (i->text.find("vale") != std::string::npos || i->text.find("ouro") != std::string::npos)
@@ -370,6 +396,18 @@ void Creature::applyIdeas(float dt) {
     }
     if (const Idea* i = findIdea("por que")) {
         em.curiosity = clampf(em.curiosity + i->strength * 0.03f * dt, 0.f, 1.f);
+    }
+    // ideias de família reforçam o desejo
+    if (const Idea* i = findIdea("familia")) {
+        em.desireFamily = clampf(em.desireFamily + i->strength * 0.02f * dt, 0.f, 1.f);
+    }
+    if (const Idea* i = findIdea("sozinho")) {
+        if (i->text.find("doeu") != std::string::npos || i->text.find("dor") != std::string::npos)
+            em.loneliness = clampf(em.loneliness + i->strength * 0.02f * dt, 0.f, 1.f);
+    }
+    // ideias de felicidade/autoestima
+    if (const Idea* i = findIdea("alegria")) {
+        em.happiness = clampf(em.happiness + i->strength * 0.015f * dt, 0.f, 1.f);
     }
 }
 
@@ -430,6 +468,11 @@ void CreatureSim::spawnStarter(int count) {
         c.pers.laziness = clampf(gauss(0.5f, 0.25f), 0.f, 1.f);
         c.pers.empathy = clampf(gauss(0.5f, 0.25f), 0.f, 1.f);
         c.pers.wanderlust = clampf(gauss(0.5f, 0.28f), 0.f, 1.f);
+        c.pers.attachment = clampf(gauss(0.5f, 0.3f), 0.f, 1.f);
+        c.pers.optimism = clampf(gauss(0.5f, 0.25f), 0.f, 1.f);
+        // estado emocional inicial
+        c.em.happiness = clampf(0.4f + c.pers.optimism * 0.3f, 0.f, 1.f);
+        c.em.security = 0.4f;
         // cada um quer um tipo diferente de par
         // cada fêmea é ÚNICA — preferências bem variadas
         c.prefs.likeStrength = clampf(gauss(0.5f, 0.35f), 0.f, 1.f);
@@ -586,21 +629,20 @@ void CreatureSim::updateEmotions(Creature& c, float dt, unsigned day) {
     c.applyIdeas(dt);
 
     // decaimento natural (emoções não são estáticas)
-    e.fear = clampf(e.fear - 0.06f * dt, 0.f, 1.f);
+    e.fear = clampf(e.fear - (0.06f + c.pers.optimism * 0.04f) * dt, 0.f, 1.f);
     e.anger = clampf(e.anger - 0.04f * dt, 0.f, 1.f);
-    e.grief = clampf(e.grief - 0.02f * dt, 0.f, 1.f);
-    e.loneliness = clampf(e.loneliness + 0.015f * dt, 0.f, 1.f);
+    e.grief = clampf(e.grief - (0.02f + c.pers.optimism * 0.03f) * dt, 0.f, 1.f);
+    e.loneliness = clampf(e.loneliness + 0.02f * dt, 0.f, 1.f);
 
     // conforto térmico: o corpo sente o mundo
     float stress = thermalStress(c);
-    e.comfort = lerpf(e.comfort, 1.f - stress, clampf(2.f * dt, 0.f, 1.f));
+    e.comfort = lerpf(e.comfort, clampf(1.f - stress, 0.f, 1.f), clampf(1.5f * dt, 0.f, 1.f));
     if (stress > 0.4f) {
-        // desconforto rouba energia
-        c.energy -= stress * 0.35f * dt;
+        c.energy -= stress * 0.3f * dt;
         if (stress > 0.55f) e.fear = clampf(e.fear + 0.08f * dt, 0.f, 1.f);
     }
 
-    // medo: predador por perto (animais ou pensantes hostis)
+    // medo: predador por perto
     float px, py;
     int threatId = -1;
     if (findThreat(c, px, py, threatId)) {
@@ -613,52 +655,173 @@ void CreatureSim::updateEmotions(Creature& c, float dt, unsigned day) {
     if (e.wrathTarget >= 0) {
         Creature* enemy = get(e.wrathTarget);
         if (!enemy || !enemy->alive()) {
-            e.wrathTarget = -1; // descanse
-            e.grief = clampf(e.grief + 0.15f, 0.f, 1.f); // ou luto pela perda da "oportunidade"
+            e.wrathTarget = -1;
+            e.grief = clampf(e.grief + 0.12f, 0.f, 1.f);
         } else {
             float d = dist2(c.x, c.y, enemy->x, enemy->y);
             if (d < 100.f) e.anger = clampf(e.anger + 0.2f * dt, 0.f, 1.f);
         }
     }
 
-    // amor / luto pelo par
+    // =========================================================
+    //  ECONOMIA DE BEM-ESTAR
+    //  amor → conforto → menos solidão
+    //  companheiro → amor + segurança + conforto
+    //  filhotes → felicidade; perder → tristeza
+    //  casa/comunidade → segurança
+    //  solidão → tristeza
+    // =========================================================
+
+    bool mateNear = false;
+    Creature* mate = nullptr;
     if (e.mateId >= 0) {
-        Creature* mate = get(e.mateId);
+        mate = get(e.mateId);
         if (!mate || !mate->alive()) {
+            // perdeu o par: luto
             if (e.grief < 0.2f) {
                 addEvent(c.name + " sente a falta de quem amava.");
                 c.formIdea(IdeaKind::Love, "amar pode doer", 0.45f, day, 0.5f);
             }
-            e.grief = clampf(e.grief + 0.1f, 0.f, 1.f);
-            e.love = clampf(e.love - 0.15f * dt, 0.f, 1.f);
-            Bond* b = c.bond(e.mateId);
-            if (b) b->grudge = clampf(b->grudge + 0.02f * dt, 0.f, 1.f); // rancor do mundo
-            if (e.grief > 0.9f && chance(0.002f)) e.mateId = -1;
+            e.grief = clampf(e.grief + 0.08f * dt, 0.f, 1.f);
+            e.love = clampf(e.love - 0.1f * dt, 0.f, 1.f);
+            e.security = clampf(e.security - 0.05f * dt, 0.f, 1.f);
+            mate = nullptr;
         } else {
             float d = dist2(c.x, c.y, mate->x, mate->y);
-            if (d < 25.f) {
-                e.love = clampf(e.love + 0.12f * dt, 0.f, 1.f);
-                e.loneliness = clampf(e.loneliness - 0.2f * dt, 0.f, 1.f);
-                Bond& b = c.ensureBond(mate->id, day);
-                b.trust = clampf(b.trust + 0.05f * dt, -1.f, 1.f);
-                b.affection = clampf(b.affection + 0.08f * dt, -1.f, 1.f);
+            mateNear = d < 40.f;
+        }
+    }
+
+    // --- COMPANHEIRO presente → amor, segurança, conforto, fim da solidão ---
+    if (mateNear && mate) {
+        float d = dist2(c.x, c.y, mate->x, mate->y);
+        if (d < 25.f) {
+            // compatibilidade: atração mutua alimenta o conforto do casal
+            float compat = clampf(c.attractionTo(*mate) * 0.6f +
+                                  (c.bond(mate->id) ? c.bond(mate->id)->affection * 0.4f : 0.f), 0.f, 1.f);
+            float attachW = 0.5f + c.pers.attachment * 0.7f;
+            e.love = clampf(e.love + 0.14f * dt * attachW, 0.f, 1.f);
+            e.security = clampf(e.security + 0.1f * dt, 0.f, 1.f);
+            // amor + compatibilidade + companheiro = conforto
+            e.comfort = clampf(e.comfort + e.love * compat * 0.12f * dt, 0.f, 1.f);
+            // solidão some com companheiro
+            e.loneliness = clampf(e.loneliness - 0.35f * dt, 0.f, 1.f);
+            // prazer de estar junto
+            e.satisfaction = clampf(e.satisfaction + 0.015f * dt * e.love, 0.f, 1.f);
+            Bond& b = c.ensureBond(mate->id, day);
+            b.trust = clampf(b.trust + 0.04f * dt, -1.f, 1.f);
+            b.affection = clampf(b.affection + 0.06f * dt, -1.f, 1.f);
+        } else if (d < 100.f) {
+            // par um pouco distante: saudade puxa
+            e.loneliness = clampf(e.loneliness + 0.01f * dt, 0.f, 1.f);
+            e.love = clampf(e.love + 0.03f * dt, 0.f, 1.f);
+        }
+    }
+
+    // --- AMOR dá conforto e prazer ---
+    e.comfort = clampf(e.comfort + e.love * 0.04f * dt, 0.f, 1.f);
+    if (e.love > 0.5f) e.satisfaction = clampf(e.satisfaction + 0.008f * dt, 0.f, 1.f);
+
+    // --- AMIGOS/FAMÍLIA por perto também puxam a solidão ---
+    {
+        int friends = 0;
+        for (auto& o : creatures_) {
+            if (o.id == c.id || !o.alive()) continue;
+            if (o.id == e.mateId) continue; // par já tratado
+            Bond* b = c.bond(o.id);
+            bool family = (o.id == c.parentA || o.id == c.parentB ||
+                           std::find(c.childrenIds.begin(), c.childrenIds.end(), o.id) != c.childrenIds.end() ||
+                           (!c.surname.empty() && o.surname == c.surname));
+            if ((b && b->affection > 0.2f) || family ||
+                dist2(c.x, c.y, o.x, o.y) < 16.f) friends++;
+        }
+        if (friends > 0) {
+            e.loneliness = clampf(e.loneliness - (0.06f + friends * 0.02f) * dt, 0.f, 1.f);
+            e.security = clampf(e.security + 0.02f * dt, 0.f, 1.f);
+        }
+    }
+
+    // --- CONFORTO reduz solidão ---
+    e.loneliness = clampf(e.loneliness - e.comfort * 0.06f * dt, 0.f, 1.f);
+
+    // --- SOLIDÃO gera tristeza ---
+    if (e.loneliness > 0.5f) {
+        e.grief = clampf(e.grief + (e.loneliness - 0.5f) * 0.06f * dt, 0.f, 1.f);
+        e.happiness = clampf(e.happiness - 0.04f * dt, 0.f, 1.f);
+    }
+
+    // --- SEGURANÇA reduz medo ---
+    if (e.security > 0.4f) e.fear = clampf(e.fear - e.security * 0.08f * dt, 0.f, 1.f);
+    e.security = clampf(e.security - 0.015f * dt, 0.f, 1.f); // decai devagar
+
+    // --- CASA / COMUNIDADE dá conforto e segurança ---
+    if (c.communityId >= 0) {
+        if (Community* comm = community(c.communityId)) {
+            float dHome = dist2(c.x, c.y, comm->x, comm->y);
+            if (dHome < comm->territoryR * comm->territoryR) {
+                if (comm->hasHut() || comm->hasBuilding(2)) {
+                    e.comfort = clampf(e.comfort + 0.06f * dt, 0.f, 1.f);
+                    e.security = clampf(e.security + 0.08f * dt, 0.f, 1.f);
+                    e.happiness = clampf(e.happiness + 0.02f * dt, 0.f, 1.f);
+                }
+                if (comm->hasFire()) {
+                    e.security = clampf(e.security + 0.06f * dt, 0.f, 1.f);
+                    e.comfort = clampf(e.comfort + 0.04f * dt, 0.f, 1.f);
+                }
             }
         }
     }
 
-    // solidão: pensantes são sociais demais para viver sozinhos
-    int friends = 0;
-    for (auto& o : creatures_) {
-        if (o.id == c.id || !o.alive()) continue;
-        Bond* b = c.bond(o.id);
-        if (b && b->affection > 0.2f) friends++;
-        else if (dist2(c.x, c.y, o.x, o.y) < 16.f) friends++;
+    // --- FILHOTES vivos dão felicidade ---
+    int livingKids = 0;
+    int kidsNear = 0;
+    for (int kidId : c.childrenIds) {
+        Creature* k = get(kidId);
+        if (k && k->alive()) {
+            livingKids++;
+            if (dist2(c.x, c.y, k->x, k->y) < 40.f) kidsNear++;
+        }
     }
-    if (friends == 0) e.loneliness = clampf(e.loneliness + 0.04f * dt, 0.f, 1.f);
-    else e.loneliness = clampf(e.loneliness - 0.08f * dt, 0.f, 1.f);
+    c.livingChildren = livingKids;
+    if (livingKids > 0) {
+        e.happiness = clampf(e.happiness + (0.06f + kidsNear * 0.04f) * dt, 0.f, 1.f);
+        e.pride = clampf(e.pride + 0.03f * dt, 0.f, 1.f);
+        e.satisfaction = clampf(e.satisfaction + 0.02f * dt, 0.f, 1.f);
+        e.desireFamily = clampf(e.desireFamily + 0.02f * dt, 0.f, 1.f);
+    }
 
-    // curiosidade flutua com o dia
-    e.curiosity = clampf(0.25f + 0.25f * world_.lightLevel() + 0.1f * (1.f - e.fear), 0.f, 1.f);
+    // --- DESEJO DE FAMÍLIA cresce com idade, conforto, apego ---
+    if (!c.juvenile()) {
+        float ageW = clampf((c.age - 1.5f) / 3.f, 0.f, 1.f);
+        e.desireFamily = clampf(e.desireFamily +
+            (0.008f + ageW * 0.015f + e.comfort * 0.01f + c.pers.attachment * 0.02f) * dt,
+            0.f, 1.f);
+    }
+
+    // --- empatia: o bem-estar alheio contamina (positivo ou negativo) ---
+    if (c.pers.empathy > 0.55f) {
+        // olha o par/filhos: felicidade deles sobe a nossa um pouco
+        if (mateNear && mate->em.happiness > 0.6f)
+            e.happiness = clampf(e.happiness + 0.015f * dt, 0.f, 1.f);
+        if (kidsNear > 0 && mate && mate->em.grief > 0.4f)
+            e.grief = clampf(e.grief + 0.02f * dt, 0.f, 1.f);
+    }
+
+    // --- FELICIDADE base: otimismo + conforto + amor - solidão - medo ---
+    float happyBase = 0.25f
+        + c.pers.optimism * 0.30f
+        + e.comfort * 0.20f
+        + e.love * 0.12f
+        + e.security * 0.10f
+        + e.happiness * 0.15f
+        - e.loneliness * 0.25f
+        - e.fear * 0.15f
+        - e.grief * 0.20f;
+    e.happiness = clampf(lerpf(e.happiness, clampf(happyBase, 0.f, 1.f), clampf(0.4f * dt, 0.f, 1.f)), 0.f, 1.f);
+
+    // curiosidade flutua com o dia (e medo a reprime)
+    e.curiosity = clampf(0.25f + 0.25f * world_.lightLevel() + 0.1f * (1.f - e.fear)
+                         + c.pers.thinker * 0.1f, 0.f, 1.f);
 }
 
 bool CreatureSim::findThreat(const Creature& c, float& px, float& py, int& threatId) const {
@@ -995,17 +1158,24 @@ bool CreatureSim::tryEat(Creature& c, float dt) {
             }
         }
         c.em.satisfaction = clampf(c.em.satisfaction + 0.35f, 0.f, 1.f);
+        c.em.happiness = clampf(c.em.happiness + 0.08f, 0.f, 1.f);
+        // comer é vivo: reforça o instinto de buscar comida boa
+        if (!c.findIdea("comer e viver"))
+            c.formIdea(IdeaKind::Food, "comer bem e viver bem", 0.35f, currentDay_, 0.6f);
         if (c.age > 2.f && c.k.discrimination > 0.3f && c.k.tool_skill < 1.f && chance(0.012f)) {
             c.k.tool_skill = clampf(c.k.tool_skill + 0.15f, 0.f, 1.f);
+            learnPleasure(c, 0.2f); // aprender é prazeroso
             addEvent(c.name + " aprendeu a usar um galho como ferramenta.");
             c.formIdea(IdeaKind::Self, "minhas maos podem mudar o mundo", 0.5f, currentDay_, 0.7f);
             c.formIdea(IdeaKind::World, "os galhos servem para algo", 0.45f, currentDay_, 0.55f);
         }
         if (c.k.tool_skill > 0.4f && c.k.fire_knowledge < 1.f && chance(0.006f)) {
             c.k.fire_knowledge = clampf(c.k.fire_knowledge + 0.2f, 0.f, 1.f);
+            learnPleasure(c, 0.25f);
             addEvent(c.name + " trouxe luz para a noite: fogo.");
             c.formIdea(IdeaKind::World, "a luz afasta o medo", 0.6f, currentDay_, 0.8f);
             c.formIdea(IdeaKind::Self, "eu posso trazer calor", 0.5f, currentDay_, 0.75f);
+            c.formIdea(IdeaKind::Community, "o fogo junta quem tem frio", 0.4f, currentDay_, 0.8f);
         }
         c.state = CState::Wander;
         if (chance(0.08f)) addEvent(c.name + " encontrou comida boa.");
@@ -1055,18 +1225,31 @@ bool CreatureSim::tryDrink(Creature& c, float dt) {
     if (c.hydration > 80.f) {
         c.state = CState::Rest;
         c.stateT = 2.f; // descansa um pouco depois de beber
+        c.em.satisfaction = clampf(c.em.satisfaction + 0.2f, 0.f, 1.f);
+        c.em.comfort = clampf(c.em.comfort + 0.1f, 0.f, 1.f);
+        if (!c.findIdea("sede"))
+            c.formIdea(IdeaKind::World, "a sede lembra que somos vivos", 0.3f, currentDay_, 0.5f);
     }
     return true;
 }
 
 void CreatureSim::tryReproduce(Creature& a, std::vector<Creature>& out) {
     if (a.juvenile() || a.mateCooldown > 0.f || a.energy < 55.f) return;
+    // capacidade suave: casal com muitos filhos ou mundo cheio freia
+    if (a.livingChildren >= 5) return;
+    int pop = aliveCount();
+    if (pop > 30 && chance(0.5f)) return;
+    if (pop > 60) return;
     for (auto& b : creatures_) {
         if (b.id == a.id || !b.alive()) continue;
         if (b.male == a.male) continue;
         if (b.juvenile() || b.mateCooldown > 0.f || b.energy < 55.f) continue;
+        if (b.livingChildren >= 5) continue;
         if (dist2(a.x, a.y, b.x, b.y) > 1.44f) continue;
-        float p = 0.2f * a.g.fertility * b.g.fertility;
+        // casal feliz quer mais filhotes; casal infeliz espera
+        float p = 0.12f * a.g.fertility * b.g.fertility;
+        p *= 0.5f + a.em.happiness * 0.5f;
+        p *= 0.6f + a.em.love * 0.4f;
         if (!chance(p)) continue;
 
         a.energy -= 25.f;
@@ -1075,13 +1258,26 @@ void CreatureSim::tryReproduce(Creature& a, std::vector<Creature>& out) {
         b.mateCooldown = 22.f;
         a.children++;
         b.children++;
-        // amor: encontraram alguém para não estar sozinho
+        a.totalChildrenBorn++;
+        b.totalChildrenBorn++;
+        // acaslar dá prazer e confirma o par
         a.em.mateId = b.id;
         b.em.mateId = a.id;
-        a.em.love = clampf(a.em.love + 0.3f, 0.f, 1.f);
-        b.em.love = clampf(b.em.love + 0.3f, 0.f, 1.f);
+        a.em.love = clampf(a.em.love + 0.35f, 0.f, 1.f);
+        b.em.love = clampf(b.em.love + 0.35f, 0.f, 1.f);
+        a.em.satisfaction = clampf(a.em.satisfaction + 0.4f, 0.f, 1.f);
+        b.em.satisfaction = clampf(b.em.satisfaction + 0.4f, 0.f, 1.f);
         a.em.loneliness = 0.f;
         b.em.loneliness = 0.f;
+        a.em.security = clampf(a.em.security + 0.15f, 0.f, 1.f);
+        b.em.security = clampf(b.em.security + 0.15f, 0.f, 1.f);
+        a.em.desireFamily = clampf(a.em.desireFamily + 0.2f, 0.f, 1.f);
+        b.em.desireFamily = clampf(b.em.desireFamily + 0.2f, 0.f, 1.f);
+        // ideia de família descoberta na prática
+        a.formIdea(IdeaKind::Love, "criar juntos e a maior alegria", 0.5f, currentDay_, 0.85f);
+        b.formIdea(IdeaKind::Love, "criar juntos e a maior alegria", 0.5f, currentDay_, 0.85f);
+        a.formIdea(IdeaKind::Community, "familia e o primeiro lar", 0.45f, currentDay_, 0.85f);
+        b.formIdea(IdeaKind::Community, "familia e o primeiro lar", 0.45f, currentDay_, 0.85f);
         {
             Bond& ba = a.ensureBond(b.id, currentDay_);
             ba.trust = clampf(ba.trust + 0.3f, -1.f, 1.f);
@@ -1182,11 +1378,13 @@ Creature CreatureSim::makeChild(const Creature& a, const Creature& b) {
     for (auto& idea : a.writtenIdeas) {
         if (chance(0.3f) && !c.findIdea(idea.text)) {
             c.formIdea(idea.kind, idea.text, idea.strength * 0.7f, currentDay_, idea.morality);
+            if (Idea* mine = c.findIdea(idea.text)) mine->selfTaught = false;
         }
     }
     for (auto& idea : b.writtenIdeas) {
         if (chance(0.3f) && !c.findIdea(idea.text)) {
             c.formIdea(idea.kind, idea.text, idea.strength * 0.7f, currentDay_, idea.morality);
+            if (Idea* mine = c.findIdea(idea.text)) mine->selfTaught = false;
         }
     }
     // personalidade: herança + acaso (ninguém é cópia)
@@ -1200,6 +1398,14 @@ Creature CreatureSim::makeChild(const Creature& a, const Creature& b) {
     c.pers.laziness = mix(a.pers.laziness, b.pers.laziness, 0.12f);
     c.pers.empathy = mix(a.pers.empathy, b.pers.empathy, 0.13f);
     c.pers.wanderlust = mix(a.pers.wanderlust, b.pers.wanderlust, 0.15f);
+    c.pers.attachment = mix(a.pers.attachment, b.pers.attachment, 0.16f);
+    c.pers.optimism = mix(a.pers.optimism, b.pers.optimism, 0.14f);
+    // filhos de casal amoroso já nascem com certo senso de lar
+    if (a.em.mateId == b.id && a.em.love > 0.4f) {
+        c.pers.attachment = clampf(c.pers.attachment + 0.1f, 0.f, 1.f);
+    }
+    c.em.happiness = clampf(0.35f + c.pers.optimism * 0.3f, 0.f, 1.f);
+    c.em.security = 0.35f;
     // preferências: meio dos pais + mistério (nem filho é igual ao pai)
     c.prefs.likeStrength = clampf(gauss((a.prefs.likeStrength + b.prefs.likeStrength) * 0.5f, 0.15f), 0.f, 1.f);
     c.prefs.likeSmarts = clampf(gauss((a.prefs.likeSmarts + b.prefs.likeSmarts) * 0.5f, 0.15f), 0.f, 1.f);
@@ -1232,6 +1438,7 @@ Creature CreatureSim::makeChild(const Creature& a, const Creature& b) {
             if (Idea* mine = c.findIdea(idea.text)) {
                 mine->fromId = parent.id;
                 mine->fromName = parent.name;
+                mine->selfTaught = false; // herdada, não descoberta
             }
         }
     };
@@ -1248,6 +1455,7 @@ Creature CreatureSim::makeChild(const Creature& a, const Creature& b) {
                 c.formIdea(gi.kind, gi.text, gi.strength * 0.55f, currentDay_);
                 if (Idea* mine = c.findIdea(gi.text)) {
                     mine->fromName = comm->name;
+                    mine->selfTaught = false;
                 }
             }
         }
@@ -1405,6 +1613,11 @@ void CreatureSim::socializeNearby(Creature& c, float dt, unsigned day) {
                                 theirs->strength = clampf(theirs->strength + idea.strength * 0.04f, 0.f, 1.f);
                             } else {
                                 o.formIdea(idea.kind, idea.text, idea.strength * 0.4f, day);
+                                if (Idea* mine = o.findIdea(idea.text)) {
+                                    mine->fromId = c.id;
+                                    mine->fromName = c.name;
+                                    mine->selfTaught = false;
+                                }
                                 if (chance(0.25f))
                                     addEvent(o.name + " comecou a acreditar: \"" + idea.text + "\"");
                             }
@@ -1468,6 +1681,38 @@ void CreatureSim::behavior(Creature& c, float dt, unsigned day) {
     // satisfação: quem comeu bem não precisa de tanto
     if (c.em.satisfaction > 0.f) {
         c.em.satisfaction = clampf(c.em.satisfaction - 0.05f * dt, 0.f, 1.f);
+    }
+
+    // ---- NOITE: pensantes dormem se têm sono ----
+    bool night = world_.isNight();
+    if (night && c.state != CState::Fight && c.state != CState::SeekShelter &&
+        c.hydration > 20.f && c.energy > 12.f) {
+        // sono: fadiga + preguiça + conforto alto = cochilo
+        float sleepNeed = (1.f - c.energy / 100.f)
+                        + c.pers.laziness * 0.25f
+                        + (1.f - c.em.comfort) * 0.15f
+                        - c.pers.boldness * 0.1f;
+        // casal ou comunidade: dorme mais fácil (segurança)
+        Creature* sleepMate = c.em.mateId >= 0 ? get(c.em.mateId) : nullptr;
+        bool sleepNearMate = sleepMate && sleepMate->alive() &&
+                             dist2(c.x, c.y, sleepMate->x, sleepMate->y) < 16.f;
+        if (sleepNearMate) sleepNeed += 0.15f;
+        if (c.communityId >= 0) sleepNeed += 0.1f;
+        if (sleepNeed > 0.4f || (sleepNearMate && c.em.fear < 0.25f)) {
+            c.state = CState::Rest;
+            float regen = 2.2f + c.em.comfort * 1.5f + (sleepNearMate ? 1.2f : 0.f);
+            c.energy += regen * dt;
+            c.hydration += 0.3f * dt;
+            // dormir com o par: conforto e segurança crescem juntos
+            if (sleepNearMate) {
+                c.em.comfort = clampf(c.em.comfort + 0.08f * dt, 0.f, 1.f);
+                c.em.security = clampf(c.em.security + 0.06f * dt, 0.f, 1.f);
+                c.em.loneliness = clampf(c.em.loneliness - 0.15f * dt, 0.f, 1.f);
+            }
+            // bem descansado, acorda; com muita fome, acorda pra comer
+            if (c.energy > 75.f) c.state = CState::Wander;
+            return;
+        }
     }
 
     // 1) luto profundo: para de viver por um tempo
@@ -1535,7 +1780,8 @@ void CreatureSim::behavior(Creature& c, float dt, unsigned day) {
             (void)kind;
             moveToward(c, bx, by, dt);
             if (dist2(c.x, c.y, bx, by) < 0.5f) {
-                // chegou — estuda
+                // chegou — estuda (aprender é prazeroso)
+                learnPleasure(c, 0.15f);
                 if (kind == 1) {
                     c.k.predator_knowledge = clampf(c.k.predator_knowledge + 0.06f, 0.f, 1.f);
                     c.g.intelligence = clampf(c.g.intelligence + 0.02f, 0.f, 1.f);
@@ -1759,8 +2005,7 @@ void CreatureSim::behavior(Creature& c, float dt, unsigned day) {
         return;
     }
 
-    // 5) noite + fome de calor: quem não tem fogo recolhe
-    bool night = world_.isNight();
+    // 5) noite + fome de calor: quem não tem fogo recolhe (sono já tratado acima)
     float fireSafe = c.k.fire_knowledge * 0.7f;
     if (night && c.energy < 85.f && fireSafe < 0.5f && c.em.comfort < 0.5f) {
         c.state = CState::Rest;
@@ -1805,23 +2050,67 @@ void CreatureSim::behavior(Creature& c, float dt, unsigned day) {
         return;
     }
 
-    // 8) amor: ficar perto do par é o objetivo mais alto de quem ama
-    if (c.em.mateId >= 0 && c.em.love > 0.3f) {
+    // 8) COOPERAÇÃO DE CASAL: os dois trabalham juntos para sobreviver
+    if (c.em.mateId >= 0) {
         Creature* mate = get(c.em.mateId);
         if (mate && mate->alive()) {
-            c.state = CState::SeekMate;
-            if (dist2(c.x, c.y, mate->x, mate->y) > 2.f) {
-                moveToward(c, mate->x, mate->y, dt, 0.7f);
+            float d2 = dist2(c.x, c.y, mate->x, mate->y);
+            // par unido: ficar juntos é o objetivo mais alto de quem ama
+            if (c.em.love > 0.25f || c.em.desireFamily > 0.3f) {
+                c.state = CState::SeekMate;
+                if (d2 > 2.5f) {
+                    moveToward(c, mate->x, mate->y, dt, 0.75f);
+                    return;
+                }
+                // juntos: reforça o vínculo
+                c.em.comfort = clampf(c.em.comfort + 0.03f * dt, 0.f, 1.f);
+                c.em.loneliness = clampf(c.em.loneliness - 0.2f * dt, 0.f, 1.f);
             }
-            return;
+            // compartilhar comida: um alimenta o outro
+            if (d2 < 9.f) {
+                if (mate->energy < 40.f && c.energy > 65.f) {
+                    float give = 6.f * dt;
+                    mate->energy = clampf(mate->energy + give, 0.f, 100.f);
+                    c.energy -= give * 0.6f;
+                    c.em.satisfaction = clampf(c.em.satisfaction + 0.03f * dt, 0.f, 1.f);
+                    c.em.happiness = clampf(c.em.happiness + 0.02f * dt, 0.f, 1.f);
+                    if (!c.findIdea("compartilhar"))
+                        c.formIdea(IdeaKind::Love, "compartilhar alimenta a alma", 0.4f, currentDay_, 0.85f);
+                    c.state = CState::Gather;
+                    // se eu também tenho fome, procuro comida pros dois
+                    if (c.energy < 55.f) {
+                        c.state = CState::SeekFood;
+                        tryEat(c, dt);
+                        return;
+                    }
+                    return;
+                }
+                // ajudar o par ameaçado
+                float px2, py2;
+                int tid2 = -1;
+                if (findThreat(*mate, px2, py2, tid2) && c.em.fear < 0.5f && c.g.aggression > 0.25f) {
+                    c.state = CState::Fight;
+                    moveToward(c, px2, py2, dt, 1.1f);
+                    if (dist2(c.x, c.y, px2, py2) < 1.2f) {
+                        // protege o par
+                        if (tid2 >= 0) {
+                            damage(*get(tid2), 8.f + c.g.size * 3.f, c.id, currentDay_);
+                        }
+                        c.em.love = clampf(c.em.love + 0.05f, 0.f, 1.f);
+                        c.em.pride = clampf(c.em.pride + 0.1f, 0.f, 1.f);
+                    }
+                    return;
+                }
+            }
         }
     }
 
-    // 9) acaslar — gente com mais sexualidade busca par mais; contraditos esperam
-    float mateUrgency = c.pers.sexuality * (1.f - c.pers.laziness * 0.3f);
-    if (!c.juvenile() && c.mateCooldown <= 0.f && c.energy > 55.f &&
-        c.em.loneliness > 0.1f * (1.f - mateUrgency) && c.em.fear < 0.45f - c.pers.boldness * 0.2f &&
-        chance(0.02f + mateUrgency * 0.08f)) {
+    // 9) DESEJO DE FAMÍLIA: quem quer lar procura par com mais garra
+    float mateUrgency = c.pers.sexuality * (1.f - c.pers.laziness * 0.3f)
+                      + c.em.desireFamily * 0.5f + c.pers.attachment * 0.3f;
+    if (!c.juvenile() && c.mateCooldown <= 0.f && c.energy > 50.f &&
+        c.em.loneliness > 0.05f && c.em.fear < 0.45f - c.pers.boldness * 0.2f &&
+        chance(0.02f + mateUrgency * 0.1f)) {
         float bx, by;
         bool found = false;
         scanMate(c, bx, by, found);
@@ -1830,6 +2119,9 @@ void CreatureSim::behavior(Creature& c, float dt, unsigned day) {
             if (dist2(c.x, c.y, bx, by) > 1.1f) moveToward(c, bx, by, dt);
             return;
         }
+        // quer família mas não acha par: ideia de solidão
+        if (c.em.loneliness > 0.4f && chance(0.005f * dt))
+            c.formIdea(IdeaKind::Self, "sozinho nao e o mesmo que livre", 0.35f, currentDay_, 0.5f);
     }
 
     // 10) viver: vagar, sentir o mundo, existir
@@ -1960,9 +2252,10 @@ void CreatureSim::update(float dt, unsigned day) {
     }
     for (auto& nb : newborns) creatures_.push_back(nb);
 
-    // remove mortos — carne e ossos ficam no chão
+    // remove mortos — carne e ossos ficam no chão; pais sentem a perda
     for (auto& c : creatures_) {
         if (c.state != CState::Dead) continue;
+        notifyChildDeath(c);
         int tx = (int)c.x, ty = (int)c.y;
         if (world_.inBounds(tx, ty)) {
             TileData& t = world_.at(tx, ty);

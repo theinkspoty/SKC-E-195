@@ -16,9 +16,13 @@ enum class FaunaType : uint8_t {
     SeaPredator,
     LandPredator,
     SkyPredator,
-    SmallBird
+    SmallBird,
+    Turtle,    // tartaruga: anfíbio com casco, costa + mar
+    Shark,     // tubarão: ápice do mar, evolui do piscador
+    Bear,      // urso: lobo que aprendeu a pescar
+    Whale      // baleia: herbívoro que voltou ao mar
 };
-constexpr int FAUNA_TYPE_COUNT = 9;
+constexpr int FAUNA_TYPE_COUNT = 13;
 
 enum class FaunaState : uint8_t {
     Idle = 0,
@@ -60,6 +64,7 @@ struct FaunaGenome {
     float habitatWet = 0.5f;   // prefere água
     float habitatDry = 0.5f;   // prefere terra seca
     float nocturnal = 0.3f;    // prefere caçar de noite
+    float swim = 0.f;          // habilidade de nadar (terrestres evoluem isso perto d'água)
 };
 
 struct Fauna {
@@ -78,7 +83,7 @@ struct Fauna {
     float satisfaction = 0.f; // plenitude após comer / não ter fome
     float trustSages = 0.f;   // simbiose: confia em pensantes
     // medo aprendido de quem me caça (por tipo)
-    float fearOf[FAUNA_TYPE_COUNT] = {0, 0, 0, 0, 0, 0};
+    float fearOf[FAUNA_TYPE_COUNT] = {};
     int children = 0;
     int parentA = -1, parentB = -1;
     FaunaGenome g;
@@ -87,9 +92,16 @@ struct Fauna {
     bool isPredator() const {
         return type == FaunaType::SeaPredator ||
                type == FaunaType::LandPredator ||
-               type == FaunaType::SkyPredator;
+               type == FaunaType::SkyPredator ||
+               type == FaunaType::Shark ||
+               type == FaunaType::Bear;
     }
     bool canFly() const { return type == FaunaType::SkyPredator; }
+    bool fullyAquatic() const {
+        return type == FaunaType::Medusa || type == FaunaType::Fish ||
+               type == FaunaType::SeaPredator || type == FaunaType::Shark ||
+               type == FaunaType::Whale;
+    }
 };
 
 struct LifeLadder {
@@ -99,9 +111,13 @@ struct LifeLadder {
     bool medusa = false;
     bool fish = false;
     bool amphibian = false;
+    bool turtles = false;
     bool herbivores = false;
     bool seaPred = false;
+    bool sharks = false;
+    bool whales = false;
     bool landPred = false;
+    bool bears = false;
     bool skyPred = false;
     bool scavengers = false;
     bool sages = false;
@@ -111,10 +127,14 @@ struct LifeLadder {
     int medusaCount = 0;
     int fishCount = 0;
     int amphibCount = 0;
+    int turtleCount = 0;
     int herbCount = 0;
     int scavCount = 0;
     int seaPredCount = 0;
+    int sharkCount = 0;
+    int whaleCount = 0;
     int landPredCount = 0;
+    int bearCount = 0;
     int skyPredCount = 0;
     int sageCount = 0;
 
@@ -189,10 +209,15 @@ private:
     void updateSkyPredator(Fauna& f, float dt);
     void updateSmallBird(Fauna& f, float dt);
     void schoolBirds(Fauna& f, float dt); // bando de passarinhos
+    void updateTurtle(Fauna& f, float dt);
+    void updateShark(Fauna& f, float dt);
+    void updateBear(Fauna& f, float dt);
+    void updateWhale(Fauna& f, float dt);
     void huntPrey(Fauna& f, float dt, const FaunaType* preyTypes, int nPrey, float speedMul);
 
     void wanderIn(Fauna& f, float dt, bool waterOnly);
     void moveToward(Fauna& f, float tx, float ty, float dt, float mul, bool waterOnly);
+    static bool canEnterTile(const Fauna& f, Tile t); // nado / terrestre evolve
     bool nearestOfTypes(Fauna& f, const FaunaType* types, int nTypes,
                         float& px, float& py, int& pid) const;
     bool nearestPredatorThreat(const Fauna& prey, float& px, float& py, FaunaType& ptype) const;

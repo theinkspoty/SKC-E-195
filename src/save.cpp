@@ -3,6 +3,7 @@
 #include "pensantes/creature.hpp"
 #include "animais/fauna.hpp"
 #include "deus/god.hpp"
+#include "rng.hpp"
 #include <fstream>
 #include <sstream>
 #include <cstdio>
@@ -15,7 +16,7 @@ bool saveGame(World& w, CreatureSim& sim, Ecosystem& eco,
     std::ofstream f(path);
     if (!f.is_open()) return false;
 
-    f << "SKC_SAVE 1\n";
+    f << "SKC_SAVE 3\n";
     f << "meta " << day << " " << timeAcc << " " << camX << " " << camY << " " << zoom << "\n";
     f << "dims " << w.width() << " " << w.height() << "\n";
 
@@ -56,6 +57,9 @@ bool saveGame(World& w, CreatureSim& sim, Ecosystem& eco,
           << c.pers.sexuality << " " << c.pers.boldness << " " << c.pers.thinker << " "
           << c.pers.greed << " " << c.pers.laziness << " " << c.pers.empathy << " "
           << c.pers.wanderlust << " "
+          << c.em.happiness << " " << c.em.security << " " << c.em.desireFamily << " "
+          << c.pers.attachment << " " << c.pers.optimism << " "
+          << c.totalChildrenBorn << " "
           << (int)c.state << "\n";
     }
 
@@ -68,7 +72,10 @@ bool saveGame(World& w, CreatureSim& sim, Ecosystem& eco,
           << a.g.metabolism << " " << a.g.lifespan << " " << a.g.aggression << " "
           << a.fear << " " << a.anger << " " << a.satisfaction << " "
           << a.trustSages << " " << a.children << " "
-          << a.parentA << " " << a.parentB << "\n";
+          << a.parentA << " " << a.parentB << " "
+          << a.g.swim << " "
+          << a.g.dietPlankton << " " << a.g.dietPlants << " " << a.g.dietMeat << " "
+          << a.g.habitatWet << " " << a.g.habitatDry << " " << a.g.nocturnal << "\n";
     }
 
     auto& comms = sim.communities();
@@ -158,6 +165,13 @@ bool loadGame(World& w, CreatureSim*& sim, Ecosystem*& eco, GodSystem*& god,
           >> c.communityId >> c.bornDay;
         f >> c.pers.sexuality >> c.pers.boldness >> c.pers.thinker
           >> c.pers.greed >> c.pers.laziness >> c.pers.empathy >> c.pers.wanderlust;
+        if (ver >= 3) {
+            f >> c.em.happiness >> c.em.security >> c.em.desireFamily
+              >> c.pers.attachment >> c.pers.optimism >> c.totalChildrenBorn;
+        } else {
+            c.em.happiness = clampf(0.4f + c.pers.optimism * 0.3f, 0.f, 1.f);
+            c.em.security = 0.4f;
+        }
         f >> state;
         c.state = (CState)state;
         sim->all().push_back(c);
@@ -177,6 +191,17 @@ bool loadGame(World& w, CreatureSim*& sim, Ecosystem*& eco, GodSystem*& god,
           >> a.g.lifespan >> a.g.aggression;
         f >> a.fear >> a.anger >> a.satisfaction >> a.trustSages
           >> a.children >> a.parentA >> a.parentB;
+        if (ver >= 2) {
+            f >> a.g.swim
+              >> a.g.dietPlankton >> a.g.dietPlants >> a.g.dietMeat
+              >> a.g.habitatWet >> a.g.habitatDry >> a.g.nocturnal;
+        } else {
+            // save v1: nado padrão por tipo
+            if (a.fullyAquatic() || a.type == FaunaType::Amphibian ||
+                a.type == FaunaType::Turtle) a.g.swim = 1.f;
+            else if (a.type == FaunaType::Bear) a.g.swim = 0.75f;
+            else if (a.type == FaunaType::Herbivore) a.g.swim = 0.1f;
+        }
         eco->all().push_back(a);
     }
 
