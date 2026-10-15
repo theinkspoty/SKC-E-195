@@ -93,6 +93,86 @@ bool World::canHostPlant(Tile t) const {
     return t == Tile::Grass || t == Tile::Forest || t == Tile::Soil;
 }
 
+// classifica o bioma a partir de elevação, umidade e frio
+Biome World::classifyBiome(float e, float m, float cold) const {
+    if (e < 0.34f) return Biome::Ocean;
+    if (cold > 0.72f) return Biome::Tundra;
+    if (e > 0.68f) return Biome::Mountain;
+    // deserto: seco e não-tropical
+    if (m < 0.30f && e > 0.42f && cold < 0.5f) return Biome::Desert;
+    // pântano: muito úmido e baixo
+    if (m > 0.60f && e < 0.50f) return Biome::Wetland;
+    // floresta: úmido
+    if (m > 0.50f) return Biome::Forest;
+    // costa: baixo e arenoso
+    if (e < 0.40f) return Biome::Coast;
+    return Biome::Grassland;
+}
+
+float World::biomeMoisture(Biome b, Tile t) const {
+    float base = equilibriumMoisture(t);
+    switch (b) {
+        case Biome::Ocean: return 1.f;
+        case Biome::Coast: return clampf(base * 0.85f, 0.f, 1.f);
+        case Biome::Wetland: return clampf(base * 1.35f + 0.15f, 0.f, 1.f);
+        case Biome::Desert: return clampf(base * 0.35f, 0.f, 1.f);
+        case Biome::Mountain: return clampf(base * 0.6f, 0.f, 1.f);
+        case Biome::Tundra: return clampf(base * 0.7f + 0.1f, 0.f, 1.f);
+        case Biome::Forest: return clampf(base * 1.1f, 0.f, 1.f);
+        case Biome::Grassland: return base;
+        default: return base;
+    }
+}
+
+float World::biomeFertility(Biome b, Tile t) const {
+    float base = equilibriumFertility(t);
+    switch (b) {
+        case Biome::Wetland: return clampf(base * 1.25f, 0.f, 1.f);
+        case Biome::Forest: return clampf(base * 1.15f, 0.f, 1.f);
+        case Biome::Desert: return clampf(base * 0.3f, 0.f, 1.f);
+        case Biome::Mountain: return clampf(base * 0.4f, 0.f, 1.f);
+        case Biome::Tundra: return clampf(base * 0.35f, 0.f, 1.f);
+        case Biome::Grassland: return clampf(base * 1.05f, 0.f, 1.f);
+        default: return base;
+    }
+}
+
+Biome World::biomeAt(int x, int y) const {
+    if (!inBounds(x, y)) return Biome::None;
+    return at(x, y).biome;
+}
+
+int World::countBiome(Biome b) const {
+    int n = 0;
+    for (const auto& t : tiles_) if (t.biome == b) n++;
+    return n;
+}
+
+void World::rebiome() {
+    for (int y = 0; y < h_; y++) {
+        for (int x = 0; x < w_; x++) {
+            TileData& t = at(x, y);
+            // estima elevação/umidade/frio a partir do tile existente
+            float e = 0.5f, m = 0.5f, cold = 0.f;
+            switch (t.type) {
+                case Tile::DeepWater: e = 0.2f; m = 1.f; break;
+                case Tile::Water: e = 0.32f; m = 1.f; break;
+                case Tile::Sand: e = 0.4f; m = 0.25f; break;
+                case Tile::Grass: e = 0.5f; m = t.moisture; break;
+                case Tile::Forest: e = 0.55f; m = 0.65f; break;
+                case Tile::Soil: e = 0.55f; m = 0.35f; break;
+                case Tile::Rock: e = 0.75f; m = 0.1f; break;
+                case Tile::Ice: e = 0.4f; m = 0.2f; cold = 0.9f; break;
+                default: break;
+            }
+            // frio por latitude aproximada
+            float lat = std::fabs(y - h_ * 0.5f) / (h_ * 0.5f);
+            cold = std::max(cold, lat * lat * 1.1f);
+            t.biome = classifyBiome(e, m, cold);
+        }
+    }
+}
+
 void World::generate(unsigned seed) {
     float cx = w_ * 0.5f;
     float cy = h_ * 0.5f;
@@ -102,24 +182,68 @@ void World::generate(unsigned seed) {
             float dx = (x - cx) / (w_ * 0.5f);
             float dy = (y - cy) / (h_ * 0.5f);
             float d = std::sqrt(dx * dx + dy * dy);
-            e -= smoothstep(clampf(d, 0.f, 1.f)) * 0.38f;
+            // continente mais largo: menos falloff = mais terra para biomas
+            e = e * 1.15f - smoothstep(clampf(d, 0.f, 1.f)) * 0.30f;
 
             float m = fbm(x * 0.055f + 40.f, y * 0.055f + 40.f, seed + 7u);
             float lat = std::fabs(y - cy) / (h_ * 0.5f);
             float cold = lat * lat * 1.1f + std::max(0.f, e - 0.65f) * 0.9f;
 
-            TileData t;
-            if (e < 0.26f) t.type = Tile::DeepWater;
-            else if (e < 0.34f) t.type = Tile::Water;
-            else if (e < 0.385f) t.type = Tile::Sand;
-            else if (cold > 0.72f) t.type = Tile::Ice;
-            else if (e > 0.7f) t.type = Tile::Rock;
-            else if (m > 0.56f) t.type = Tile::Forest;
-            else if (m < 0.34f && e > 0.48f) t.type = Tile::Soil;
-            else t.type = Tile::Grass;
+            // 1) BIOMA primeiro — define o caráter da região
+            Biome b = classifyBiome(e, m, cold);
 
-            t.moisture = clampf(equilibriumMoisture(t.type) * (0.7f + m * 0.6f), 0.f, 1.f);
-            t.fertility = clampf(equilibriumFertility(t.type) * (0.6f + m * 0.7f), 0.f, 1.f);
+            // 2) tile dentro do bioma (com variação local)
+            float local = hash01(x, y, seed + 42u) - 0.5f; // -0.5..0.5
+            TileData t;
+            t.biome = b;
+            switch (b) {
+                case Biome::Ocean:
+                    t.type = (e < 0.26f) ? Tile::DeepWater : Tile::Water;
+                    break;
+                case Biome::Coast:
+                    // praias: areia + grama rala perto da água
+                    t.type = (e < 0.39f || local < -0.2f) ? Tile::Sand
+                           : (local > 0.3f ? Tile::Grass : Tile::Sand);
+                    break;
+                case Biome::Grassland:
+                    // pradaria: grama dominante, arbusto, terra seca
+                    t.type = (local < -0.35f) ? Tile::Soil
+                           : (local > 0.42f ? Tile::Forest : Tile::Grass); // bosques raros
+                    break;
+                case Biome::Forest:
+                    // floresta: densa, com clareiras e terra
+                    t.type = (local > 0.35f) ? Tile::Grass
+                           : (local < -0.3f ? Tile::Soil : Tile::Forest);
+                    break;
+                case Biome::Wetland:
+                    // pântano: grama encharcada, lagos rasos, terra
+                    t.type = (local < -0.25f) ? Tile::Water
+                           : (local > 0.4f ? Tile::Forest
+                           : (local < 0.05f ? Tile::Soil : Tile::Grass));
+                    break;
+                case Biome::Desert:
+                    // deserto: areia e rocha, quase nada vivo
+                    t.type = (local > 0.25f) ? Tile::Rock
+                           : (local < -0.3f ? Tile::Soil : Tile::Sand);
+                    break;
+                case Biome::Mountain:
+                    // montanha: rocha, neve no topo, terra na base
+                    t.type = (cold > 0.6f) ? Tile::Ice
+                           : (local > 0.15f) ? Tile::Rock
+                           : (local < -0.2f ? Tile::Soil : Tile::Rock);
+                    break;
+                case Biome::Tundra:
+                    // tundra: gelo e grama rala
+                    t.type = (local > 0.2f) ? Tile::Ice
+                           : (local < -0.15f ? Tile::Soil : Tile::Grass);
+                    break;
+                default:
+                    t.type = Tile::Grass;
+                    break;
+            }
+
+            t.moisture = clampf(biomeMoisture(b, t.type) * (0.75f + m * 0.5f), 0.f, 1.f);
+            t.fertility = clampf(biomeFertility(b, t.type) * (0.65f + m * 0.6f), 0.f, 1.f);
             t.fert_bonus = 0.f;
             t.nutrients = clampf(0.2f + hash01(x, y, seed + 99u) * 0.5f, 0.f, 1.f);
             t.biofilm = 0;
@@ -129,17 +253,35 @@ void World::generate(unsigned seed) {
         }
     }
 
-    int groveAttempts = w_ * h_ / 40;
+    // plantas iniciais — densidade e tipo por bioma
+    int groveAttempts = w_ * h_ / 30; // mais tentativas: biomas pedem mais variedade
     for (int i = 0; i < groveAttempts; i++) {
         int x = irand(2, w_ - 3);
         int y = irand(2, h_ - 3);
         TileData& t = at(x, y);
         if (!canHostPlant(t.type)) continue;
-        if (t.moisture < 0.25f || t.fertility < 0.3f) continue;
-        if (chance(0.45f)) {
-            PlantKind k = chance(0.28f) ? PlantKind::Toxic : PlantKind::Fruit;
-            spawnPlant(x, y, k, irand(1, 2));
+        Biome b = t.biome;
+        // chance de ter planta varia por bioma
+        float p = 0.f;
+        switch (b) {
+            case Biome::Forest: p = 0.65f; break;
+            case Biome::Wetland: p = 0.5f; break;
+            case Biome::Grassland: p = 0.4f; break;
+            case Biome::Coast: p = 0.2f; break;
+            case Biome::Mountain: p = 0.08f; break;
+            case Biome::Desert: p = 0.05f; break;
+            case Biome::Tundra: p = 0.06f; break;
+            default: p = 0.15f; break;
         }
+        if (!chance(p)) continue;
+        if (t.moisture < 0.15f || t.fertility < 0.2f) continue;
+        // tipo de planta por bioma: deserto/pântano têm mais veneno, floresta mais fruta
+        float toxicChance = 0.28f;
+        if (b == Biome::Desert) toxicChance = 0.55f;
+        if (b == Biome::Wetland) toxicChance = 0.45f;
+        if (b == Biome::Forest) toxicChance = 0.18f;
+        PlantKind k = chance(toxicChance) ? PlantKind::Toxic : PlantKind::Fruit;
+        spawnPlant(x, y, k, irand(1, 2));
     }
 }
 
@@ -346,9 +488,11 @@ void World::update() {
     for (int y = 0; y < h_; y++) {
         for (int x = 0; x < w_; x++) {
             TileData& t = at(x, y);
-            float eq = equilibriumMoisture(t.type);
+            float eq = biomeMoisture(t.biome, t.type);
+            // estação modula umidade do bioma
+            eq = clampf(eq * (0.7f + seasonRain() * 0.5f), 0.f, 1.f);
             t.moisture += (eq - t.moisture) * 0.0015f;
-            t.fertility += (equilibriumFertility(t.type) - t.fertility) * 0.0008f;
+            t.fertility += (biomeFertility(t.biome, t.type) - t.fertility) * 0.0008f;
             t.fert_bonus *= 0.9996f;
             t.fertility = clampf(t.fertility + t.fert_bonus * 0.0004f, 0.f, 1.f);
 
@@ -363,19 +507,65 @@ void World::update() {
                 t.nutrients += (0.3f - t.nutrients) * 0.0002f;
             }
 
-            // cadáver apodrece: devolve nutrientes ao solo; vira ossos
+            // cadáver apodrece — MÁTERIA ORGÂNICA
+            // na água apodrece 3x mais rápido (e alimenta o mar)
+            // no verão (quente) 2x; no inverno (gelo) quase para
             if (t.corpse > 0) {
-                if (chance(0.01f)) {
+                float rotRate = 0.01f;
+                if (t.type == Tile::Water || t.type == Tile::DeepWater) rotRate = 0.035f;
+                else if (t.type == Tile::Ice) rotRate = 0.002f;
+                else if (season_ == 1) rotRate = 0.02f; // verão acelera
+                if (chance(rotRate)) {
                     t.corpse--;
-                    t.nutrients = clampf(t.nutrients + 0.05f, 0.f, 1.f);
-                    t.fertility = clampf(t.fertility + 0.01f, 0.f, 1.f);
+                    float n = 0.05f;
+                    if (t.type == Tile::Water || t.type == Tile::DeepWater) {
+                        // na água: nutriente vira biofilme/plâncton direto
+                        t.biofilm = (uint8_t)std::min(3, (int)t.biofilm + 1);
+                        if (chance(0.4f)) t.plankton = (uint8_t)std::min(3, (int)t.plankton + 1);
+                        t.nutrients = clampf(t.nutrients + n * 0.6f, 0.f, 1.f);
+                    } else {
+                        t.nutrients = clampf(t.nutrients + n, 0.f, 1.f);
+                        t.fertility = clampf(t.fertility + 0.01f, 0.f, 1.f);
+                    }
                     if (t.corpse == 0) t.bones = 10; // resto vira osso
                 }
             }
-            // ossos apodrecem muito devagar
-            if (t.bones > 0 && chance(0.001f)) {
+            // ossos se degradam MUITO devagar (intemperismo) — nunca somem sem motivo
+            // viram poeira mineral: nutrientes no solo, cálcio
+            if (t.bones > 0 && chance(0.0005f)) {
                 t.bones--;
-                t.nutrients = clampf(t.nutrients + 0.02f, 0.f, 1.f);
+                t.nutrients = clampf(t.nutrients + 0.03f, 0.f, 1.f);
+                t.fertility = clampf(t.fertility + 0.008f, 0.f, 1.f); // cálcio melhora o solo
+                // no fim, um último grão de poeira branca some
+            }
+            // fruta caída apodrece e vira nutriente (terra) ou plâncton (água)
+            if (t.fallenFruit > 0) {
+                float fruitRot = 0.012f;
+                if (t.type == Tile::Water || t.type == Tile::DeepWater) fruitRot = 0.03f;
+                if (chance(fruitRot)) {
+                    t.fallenFruit--;
+                    t.nutrients = clampf(t.nutrients + 0.04f, 0.f, 1.f);
+                    if ((t.type == Tile::Water || t.type == Tile::DeepWater) && chance(0.3f))
+                        t.plankton = (uint8_t)std::min(3, (int)t.plankton + 1);
+                }
+            }
+            // fruta madura cai da planta para o chão
+            if (t.plant.kind == PlantKind::Fruit && t.plant.stage >= 2 && t.fallenFruit < 7) {
+                if (chance(0.0008f * (1.f + pollination_))) {
+                    t.fallenFruit = (uint8_t)std::min(7, (int)t.fallenFruit + 1);
+                }
+            }
+            // planta seca/morta devolve um pouco de nutrientes
+            // (já tratado no decay de plantas abaixo, quando kind vira None)
+
+            // GRAMA ORGÂNICA: grama úmida e fértil pode virar floresta (sucessão);
+            // floresta seca vira grama; deserto não muda
+            if (t.type == Tile::Grass && t.moisture > 0.55f && t.fertility > 0.5f &&
+                t.biome != Biome::Desert && chance(0.0003f)) {
+                t.type = Tile::Forest;
+            } else if (t.type == Tile::Forest && (t.moisture < 0.2f || t.fertility < 0.15f) &&
+                       chance(0.0004f)) {
+                t.type = Tile::Grass;
             }
 
             // ---- oceano vivo: biofilme e plancton em TODA a água ----
@@ -431,7 +621,11 @@ void World::update() {
                 float dry = 0.08f * (2.f - p.gene.hardiness);
                 if (t.moisture < dry && chance(0.012f * (2.f - p.gene.hardiness))) {
                     if (p.stage > 0) p.stage--;
-                    else p.kind = PlantKind::None;
+                    else {
+                        // planta morre e devolve nutrientes ao solo
+                        t.nutrients = clampf(t.nutrients + 0.04f + p.gene.yield * 0.03f, 0.f, 1.f);
+                        p.kind = PlantKind::None;
+                    }
                 } else if (p.stage < 2 && t.moisture > 0.2f && t.fertility > 0.15f) {
                     // fotossíntese: cresce de dia, afetada por estação
                     float g = 0.00022f * t.moisture * (0.4f + t.fertility + t.fert_bonus);
@@ -583,8 +777,8 @@ void World::paint(int cx, int cy, int radius, Tile type) {
             if (dx * dx + dy * dy > radius * radius) continue;
             TileData& t = at(x, y);
             t.type = type;
-            t.moisture = equilibriumMoisture(type);
-            t.fertility = equilibriumFertility(type);
+            t.moisture = biomeMoisture(t.biome, type);
+            t.fertility = biomeFertility(t.biome, type);
             if (!canHostPlant(type)) {
                 t.plant = Plant{};
             }
@@ -623,6 +817,20 @@ const char* tileName(Tile t) {
         case Tile::Ice: return "Gelo";
         case Tile::Soil: return "Terra";
         default: return "?";
+    }
+}
+
+const char* biomeName(Biome b) {
+    switch (b) {
+        case Biome::Ocean: return "Oceano";
+        case Biome::Coast: return "Costa";
+        case Biome::Grassland: return "Pradaria";
+        case Biome::Forest: return "Floresta";
+        case Biome::Wetland: return "Pantano";
+        case Biome::Desert: return "Deserto";
+        case Biome::Mountain: return "Montanha";
+        case Biome::Tundra: return "Tundra";
+        default: return "-";
     }
 }
 

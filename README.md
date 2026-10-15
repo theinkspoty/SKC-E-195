@@ -4,14 +4,16 @@ Simulação de vida independente em C++ — um god game onde você influencia, m
 
 ## O que é
 
-Um mundo pixel onde a vida **emerge sozinha** quando as condições existem:
+Um mundo pixel onde a vida **emerge sozinha** quando as condições existem, em **eras geológicas** como na Terra:
 
 ```
-Minerais + água → Microbioma → Plâncton → Medusa → Peixe
-→ Anfíbio → Tartaruga / Herbívoro → Piscador → Tubarão
-→ Baleia (herbívoro que volta ao mar) → Lobo → Urso
-→ Carroneiro / Falcon → Pensantes → Comunidades → Cultura
+Silêncio → Microbioma → Explosão Cambriana → Oceanos
+→ Terra Verde (Devoniano) → Caça → Mente → Cultura
 ```
+
+- **Explosão Cambriana**: o mar ferve, formas novas aparecem de uma vez, predadores gigantes surgem
+- **Evolução por habitat**: quem vive na água vira água, quem vive na terra vira terra — os filhos herdam onde os pais viveram e acharam comida
+- **Pressão evolutiva** cresce com as gerações: quanto mais tempo, mais os genes mudam
 
 Você é um deus **limitado**: pode pedir chuva, fruta, asteroide, geada — mas o mundo decide se aceita.
 

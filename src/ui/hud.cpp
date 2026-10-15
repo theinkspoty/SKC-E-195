@@ -255,6 +255,33 @@ SDL_Color tileColor(const TileData& t, int x, int y) {
         case Tile::Soil: c = {120, 88, 58, 255}; break;
         default: c = {255, 0, 255, 255}; break;
     }
+    // tom do bioma: pradaria mais amarelada, pântano mais esverdeado,
+    // deserto mais claro, montanha mais cinza, tundra mais pálida
+    switch (t.biome) {
+        case Biome::Grassland:
+            c.r = (Uint8)std::min(255, c.r + 14); c.g = (Uint8)std::min(255, c.g + 8);
+            break;
+        case Biome::Wetland:
+            c.g = (Uint8)std::min(255, c.g + 18); c.b = (Uint8)std::min(255, c.b + 10);
+            break;
+        case Biome::Desert:
+            c.r = (Uint8)std::min(255, c.r + 12); c.g = (Uint8)std::min(255, c.g + 10);
+            c.b = (Uint8)std::max(0, c.b - 8);
+            break;
+        case Biome::Mountain:
+            c.r = (Uint8)std::min(255, c.r + 6); c.g = (Uint8)std::min(255, c.g + 6);
+            c.b = (Uint8)std::min(255, c.b + 8);
+            break;
+        case Biome::Tundra:
+            c.r = (Uint8)std::min(255, c.r + 18); c.g = (Uint8)std::min(255, c.g + 16);
+            c.b = (Uint8)std::min(255, c.b + 14);
+            break;
+        case Biome::Coast:
+            // areia mais clara na costa
+            if (t.type == Tile::Sand) { c.r = (Uint8)std::min(255, c.r + 10); c.g = (Uint8)std::min(255, c.g + 8); }
+            break;
+        default: break;
+    }
     float m = t.moisture;
     c.r = (Uint8)clampf(c.r * (1.f - m * 0.10f) + var * 22.f, 0.f, 255.f);
     c.g = (Uint8)clampf(c.g * (1.f - m * 0.04f) + var * 24.f, 0.f, 255.f);
@@ -278,6 +305,9 @@ static SDL_Color faunaCol(int type) {
         case 10: return {100, 110, 125, 255};
         case 11: return {120, 80, 50, 255};
         case 12: return {70, 95, 155, 255};
+        case 13: return {180, 140, 110, 255};
+        case 14: return {160, 130, 90, 255};
+        case 15: return {200, 220, 80, 255};
         default: return {200, 200, 200, 255};
     }
 }
@@ -297,11 +327,19 @@ void Hud::draw(SDL_Renderer* r, const HudState& st) {
 
     // logo + versão
     text(r, fontBig_, 14, 6, "SKC E-195", {120, 220, 240, 255});
-    // era em "badge"
+    // era em "badge" (nome + período geológico)
     if (st.eco) {
-        std::string era = eraName(st.eco->era());
+        std::string era = std::string(eraName(st.eco->era()));
+        // mostra período geológico em parênteses quando relevante
+        const char* per = eraPeriod(st.eco->era());
+        if (per && per[0] && st.eco->era() != Era::Silence) {
+            era += " · ";
+            era += per;
+        }
         int ew = textWidth(font_, era) + 18;
-        chip(r, 140, 8, ew, 20, era, {255, 210, 130, 255}, 120);
+        SDL_Color ec = st.eco->era() == Era::Cambrian ? SDL_Color{255, 160, 80, 255}
+                     : SDL_Color{255, 210, 130, 255};
+        chip(r, 140, 8, ew, 20, era, ec, 120);
     }
     if (st.sims && st.sims->totalGenerations() > 0) {
         std::string ce = st.sims->culturalEraName();
@@ -777,6 +815,18 @@ void Hud::draw(SDL_Renderer* r, const HudState& st) {
                  f.male ? "macho" : "femea", f.age, f.g.lifespan, f.children);
         text(r, fontSmall_, px, ty, line, {190, 200, 215, 255});
         ty += 18;
+        // grupo social
+        if (f.groupId >= 0 && st.eco) {
+            FaunaGroup* g = nullptr;
+            for (auto& gg : st.eco->groups()) if (gg.id == f.groupId) { g = &gg; break; }
+            if (g) {
+                snprintf(line, sizeof(line), "%s #%d — %d membros%s",
+                         g->kindName(), g->id, g->size(),
+                         g->leaderId == f.id ? " (lider)" : "");
+                text(r, fontSmall_, px, ty, line, {180, 210, 170, 255});
+                ty += 14;
+            }
+        }
         text(r, fontSmall_, px, ty, "Energia", {180, 180, 180, 255});
         bar(r, px + 62, ty + 1, leftW - 86, 8, f.energy / 100.f, {80, 200, 100, 255});
         ty += 13;
@@ -787,6 +837,17 @@ void Hud::draw(SDL_Renderer* r, const HudState& st) {
                  f.g.speed, f.g.vision, f.g.size, f.g.aggression, f.g.swim);
         text(r, fontSmall_, px, ty, line, {170, 180, 195, 255});
         ty += 14;
+        // onde viveu de verdade (evolução por habitat)
+        {
+            const char* hab = f.habitatUse > 0.65f ? "vive no mar"
+                            : f.habitatUse < 0.35f ? "vive na terra"
+                            : "vive na costa";
+            snprintf(line, sizeof(line), "habitat: %s (%.0f%% agua)", hab, f.habitatUse * 100.f);
+            text(r, fontSmall_, px, ty, line,
+                 f.habitatUse > 0.65f ? SDL_Color{120, 190, 240, 255} :
+                 (f.habitatUse < 0.35f ? SDL_Color{180, 200, 140, 255} : SDL_Color{200, 190, 140, 255}));
+            ty += 14;
+        }
         text(r, fontSmall_, px, ty, Ecosystem::nicheOf(f).c_str(), {140, 200, 160, 255});
         ty += 16;
         if (f.fearOf[(int)FaunaType::SeaPredator] > 0.1f || f.fearOf[(int)FaunaType::LandPredator] > 0.1f ||
@@ -811,7 +872,7 @@ void Hud::draw(SDL_Renderer* r, const HudState& st) {
     // ============ ESCADA DA VIDA ============
     if (st.showLadder && st.eco) {
         LifeLadder L = st.eco->ladder();
-        const int lh = 300;
+        const int lh = 348;
         int ly = y;
         if (ly + lh > winH - 80) ly = topH + 8;
         panel(r, leftX, ly, leftW, lh, 185);
@@ -838,18 +899,21 @@ void Hud::draw(SDL_Renderer* r, const HudState& st) {
         row(1, "Plancton", L.plankton, 0, "luz+nutrientes");
         row(2, "Plantas", L.plants, 0, "terra umida");
         row(3, "Medusa", L.medusa, L.medusaCount, "plancton (mar)");
-        row(4, "Peixe", L.fish, L.fishCount, "medusas");
-        row(5, "Anfibio", L.amphibian, L.amphibCount, "peixe + margem");
-        row(6, "Tartaruga", L.turtles, L.turtleCount, "anfibio + costa");
-        row(7, "Herbivoro", L.herbivores, L.herbCount, "anfibio + plantas");
-        row(8, "Piscador", L.seaPred, L.seaPredCount, "peixes (mar)");
-        row(9, "Tubarao", L.sharks, L.sharkCount, "piscadores");
-        row(10, "Baleia", L.whales, L.whaleCount, "herbivoro que nada");
-        row(11, "Lobo", L.landPred, L.landPredCount, "herbivoros (terra)");
-        row(12, "Urso", L.bears, L.bearCount, "lobo perto d'agua");
-        row(13, "Falcon", L.skyPred, L.skyPredCount, "carroneiros (ar)");
-        row(14, "Carroneiro", L.scavengers, L.scavCount, "mortes");
-        row(15, "Pensantes", L.sages, L.sageCount, "pressao+tempo");
+        row(4, "Trilobita", L.trilobites, L.trilobiteCount, "biofilme (fundo)");
+        row(5, "Peixe", L.fish, L.fishCount, "medusas");
+        row(6, "Anfibio", L.amphibian, L.amphibCount, "peixe + margem");
+        row(7, "Tartaruga", L.turtles, L.turtleCount, "anfibio + costa");
+        row(8, "Herbivoro", L.herbivores, L.herbCount, "anfibio + plantas");
+        row(9, "Inseto", L.insects, L.insectCount, "plantas");
+        row(10, "Piscador", L.seaPred, L.seaPredCount, "peixes (mar)");
+        row(11, "Tubarao", L.sharks, L.sharkCount, "piscadores");
+        row(12, "Baleia", L.whales, L.whaleCount, "herbivoro que nada");
+        row(13, "Lobo", L.landPred, L.landPredCount, "herbivoros (terra)");
+        row(14, "Urso", L.bears, L.bearCount, "lobo perto d'agua");
+        row(15, "Falcon", L.skyPred, L.skyPredCount, "carroneiros (ar)");
+        row(16, "Carroneiro", L.scavengers, L.scavCount, "mortes");
+        row(17, "Verme", L.worms, L.wormCount, "carcoas no chao");
+        row(18, "Pensantes", L.sages, L.sageCount, "pressao+tempo");
         text(r, fontSmall_, leftX + 10, ly + lh - 18, L.nextHint(), {230, 200, 140, 255}, false);
     }
 
@@ -893,6 +957,15 @@ void Hud::draw(SDL_Renderer* r, const HudState& st) {
         text(r, fontSmall_, rxp + 20, ry, "Pensante", {200, 210, 220, 255}, false);
         snprintf(buf, sizeof(buf), "%d", sages);
         text(r, fontSmall_, rxp + rw - 30, ry, buf, {170, 190, 200, 255}, false);
+        ry += 14;
+        // grupos sociais
+        if (st.eco && st.eco->groupCount() > 0) {
+            SDL_SetRenderDrawColor(r, 200, 200, 140, 255);
+            SDL_Rect gdot = {rxp + 8, ry + 2, 7, 7};
+            SDL_RenderFillRect(r, &gdot);
+            snprintf(buf, sizeof(buf), "Grupos %d", st.eco->groupCount());
+            text(r, fontSmall_, rxp + 20, ry, buf, {200, 200, 160, 255}, false);
+        }
         (void)totalFauna;
     }
 
@@ -961,8 +1034,8 @@ void Hud::draw(SDL_Renderer* r, const HudState& st) {
         int tx = (int)st.mouseX, ty2 = (int)st.mouseY;
         if (st.world->inBounds(tx, ty2)) {
             const TileData& t = st.world->at(tx, ty2);
-            snprintf(buf, sizeof(buf), "%s  nutr %.2f  planct %u  carca %u",
-                     tileName(t.type), t.nutrients, t.plankton, t.corpse);
+            snprintf(buf, sizeof(buf), "%s (%s)  nutr %.2f  planct %u  carca %u",
+                     tileName(t.type), biomeName(t.biome), t.nutrients, t.plankton, t.corpse);
             int tw = textWidth(fontSmall_, buf);
             int px2 = 12;
             int py2 = winH - 78 - 24;
@@ -1043,6 +1116,22 @@ void Hud::draw(SDL_Renderer* r, const HudState& st) {
                     SDL_SetRenderDrawColor(r, 200, 200, 160, 200);
                     SDL_RenderDrawPoint(r, mx2, my2);
                 }
+            }
+        }
+        // centros de grupos (rebanhos, matilhas...)
+        if (st.eco) {
+            for (const auto& g : st.eco->groups()) {
+                int mx2 = mmX + (int)(g.x / scaleX);
+                int my2 = mmY + (int)(g.y / scaleY);
+                if (mx2 < mmX || mx2 >= mmX + mmSize || my2 < mmY || my2 >= mmY + mmSize) continue;
+                SDL_Color gc = faunaCol((int)g.type);
+                // marca em cruz para diferenciar de ponto de animal
+                SDL_SetRenderDrawColor(r, gc.r, gc.g, gc.b, 255);
+                SDL_RenderDrawPoint(r, mx2, my2);
+                SDL_RenderDrawPoint(r, mx2 - 1, my2);
+                SDL_RenderDrawPoint(r, mx2 + 1, my2);
+                SDL_RenderDrawPoint(r, mx2, my2 - 1);
+                SDL_RenderDrawPoint(r, mx2, my2 + 1);
             }
         }
         // marcador da câmera

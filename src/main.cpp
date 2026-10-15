@@ -169,6 +169,9 @@ static SDL_Color faunaColor(int type) {
         case 10: return {100, 110, 125, 255};// tubarão — cinza-azulado
         case 11: return {120, 80, 50, 255};  // urso — marrom escuro
         case 12: return {70, 95, 155, 255};  // baleia — azul-petróleo
+        case 13: return {180, 140, 110, 255};// verme — rosa-acinzentado
+        case 14: return {160, 130, 90, 255}; // trilobita — âmbar/cinza
+        case 15: return {200, 220, 80, 255}; // inseto — amarelo-verde
         default: return {200, 200, 200, 255};
     }
 }

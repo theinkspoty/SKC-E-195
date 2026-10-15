@@ -20,6 +20,23 @@ enum class Tile : uint8_t {
     COUNT
 };
 
+// BIOMAS: regiões com clima, vida e caráter próprios
+// (como na Terra: oceano, costa, pradaria, floresta, pântano, deserto...)
+enum class Biome : uint8_t {
+    None = 0,
+    Ocean,      // mar aberto — plâncton, peixes, baleias
+    Coast,      // praias e margens — tartarugas, anfíbios
+    Grassland,  // pradaria — herbívoros, passarinhos
+    Forest,     // floresta — frutas, cobertura, lobos
+    Wetland,    // pântano — umidade alta, berçário de anfíbios
+    Desert,     // deserto — seco, plantas raras e resistentes
+    Mountain,   // montanha — rocha, frio, pouca vida
+    Tundra,     // tundra — gelo e arbusto ralo
+    COUNT
+};
+
+const char* biomeName(Biome b);
+
 enum class PlantKind : uint8_t {
     None = 0,
     Fruit,
@@ -47,14 +64,16 @@ struct Plant {
 
 struct TileData {
     Tile type = Tile::Grass;
+    Biome biome = Biome::None;
     float moisture = 0.5f;
     float fertility = 0.5f;
     float fert_bonus = 0.f;
     float nutrients = 0.35f;
     uint8_t biofilm = 0;
     uint8_t plankton = 0;
-    uint8_t corpse = 0; // carne fresca 0-15
-    uint8_t bones = 0;  // ossos 0-15 (decai bem mais devagar)
+    uint8_t corpse = 0;  // carne fresca 0-15 (estágio: 15=fresco .. 1=quase ossos)
+    uint8_t bones = 0;   // ossos 0-15 (decai bem mais devagar)
+    uint8_t fallenFruit = 0; // fruta caída no chão 0-7 — apodrece e vira nutriente
     Plant plant;
 };
 
@@ -117,6 +136,12 @@ public:
     float pollination() const { return pollination_; }
     void setPollination(float p) { pollination_ = p; }
 
+    // BIOMAS
+    Biome biomeAt(int x, int y) const;
+    int countBiome(Biome b) const;
+    // reatribui biomas a partir dos tiles (após carregar save)
+    void rebiome();
+
 private:
     int w_, h_;
     std::vector<TileData> tiles_;
@@ -129,6 +154,10 @@ private:
     float equilibriumMoisture(Tile t) const;
     float equilibriumFertility(Tile t) const;
     bool canHostPlant(Tile t) const;
+    // umidade/fertilidade de equilíbrio considerando o bioma
+    float biomeMoisture(Biome b, Tile t) const;
+    float biomeFertility(Biome b, Tile t) const;
+    Biome classifyBiome(float e, float m, float cold) const;
 };
 
 const char* tileName(Tile t);

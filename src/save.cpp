@@ -16,7 +16,7 @@ bool saveGame(World& w, CreatureSim& sim, Ecosystem& eco,
     std::ofstream f(path);
     if (!f.is_open()) return false;
 
-    f << "SKC_SAVE 3\n";
+    f << "SKC_SAVE 5\n";
     f << "meta " << day << " " << timeAcc << " " << camX << " " << camY << " " << zoom << "\n";
     f << "dims " << w.width() << " " << w.height() << "\n";
 
@@ -73,7 +73,7 @@ bool saveGame(World& w, CreatureSim& sim, Ecosystem& eco,
           << a.fear << " " << a.anger << " " << a.satisfaction << " "
           << a.trustSages << " " << a.children << " "
           << a.parentA << " " << a.parentB << " "
-          << a.g.swim << " "
+          << a.g.swim << " " << a.habitatUse << " " << a.groupId << " "
           << a.g.dietPlankton << " " << a.g.dietPlants << " " << a.g.dietMeat << " "
           << a.g.habitatWet << " " << a.g.habitatDry << " " << a.g.nocturnal << "\n";
     }
@@ -192,8 +192,11 @@ bool loadGame(World& w, CreatureSim*& sim, Ecosystem*& eco, GodSystem*& god,
         f >> a.fear >> a.anger >> a.satisfaction >> a.trustSages
           >> a.children >> a.parentA >> a.parentB;
         if (ver >= 2) {
-            f >> a.g.swim
-              >> a.g.dietPlankton >> a.g.dietPlants >> a.g.dietMeat
+            f >> a.g.swim;
+            if (ver >= 4) f >> a.habitatUse;
+            else a.habitatUse = a.fullyAquatic() ? 1.f : 0.2f;
+            if (ver >= 5) f >> a.groupId;
+            f >> a.g.dietPlankton >> a.g.dietPlants >> a.g.dietMeat
               >> a.g.habitatWet >> a.g.habitatDry >> a.g.nocturnal;
         } else {
             // save v1: nado padrão por tipo
@@ -201,8 +204,36 @@ bool loadGame(World& w, CreatureSim*& sim, Ecosystem*& eco, GodSystem*& god,
                 a.type == FaunaType::Turtle) a.g.swim = 1.f;
             else if (a.type == FaunaType::Bear) a.g.swim = 0.75f;
             else if (a.type == FaunaType::Herbivore) a.g.swim = 0.1f;
+            a.habitatUse = a.fullyAquatic() ? 1.f : 0.2f;
         }
         eco->all().push_back(a);
+    }
+
+    // recria grupos sociais a partir dos membros carregados
+    {
+        std::vector<FaunaGroup> rebuilt;
+        for (auto& a : eco->all()) {
+            if (a.groupId < 0) continue;
+            FaunaGroup* g = nullptr;
+            for (auto& gg : rebuilt) if (gg.id == a.groupId) { g = &gg; break; }
+            if (!g) {
+                FaunaGroup ng;
+                ng.id = a.groupId;
+                ng.type = a.type;
+                rebuilt.push_back(ng);
+                g = &rebuilt.back();
+            }
+            g->memberIds.push_back(a.id);
+            g->x += a.x; g->y += a.y;
+        }
+        for (auto& g : rebuilt) {
+            if (!g.memberIds.empty()) {
+                g.x /= (float)g.memberIds.size();
+                g.y /= (float)g.memberIds.size();
+                g.leaderId = g.memberIds[0];
+            }
+        }
+        eco->groups() = rebuilt;
     }
 
     int nM;
@@ -224,6 +255,7 @@ bool loadGame(World& w, CreatureSim*& sim, Ecosystem*& eco, GodSystem*& god,
     }
 
     f.close();
+    w.rebiome(); // reatribui biomas dos tiles carregados
     w.setTimeOfDay(timeAcc / SECONDS_PER_DAY);
     return true;
 }
