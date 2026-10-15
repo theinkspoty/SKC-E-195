@@ -24,6 +24,7 @@ struct HudState {
     int creatureCount = 0;
     Creature* selected = nullptr;
     Fauna* selectedFauna = nullptr;
+    Grave* selectedGrave = nullptr; // túmulo clicado — mostra a linha do tempo
     Ecosystem* eco = nullptr;
     GodSystem* god = nullptr;
     std::vector<SimEvent>* events = nullptr;

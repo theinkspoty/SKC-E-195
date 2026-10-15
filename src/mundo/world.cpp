@@ -249,6 +249,23 @@ void World::generate(unsigned seed) {
             t.biofilm = 0;
             t.plankton = 0;
             t.plant = Plant{};
+            // árvores: floresta nasce densa, pradaria com bosques raros
+            if (t.type == Tile::Forest) {
+                t.trees = (uint8_t)clampf(hash01(x, y, seed + 55u) * 4.f + 1.5f, 1.f, 5.f);
+            } else if (t.type == Tile::Grass && b == Biome::Grassland && hash01(x, y, seed + 66u) > 0.92f) {
+                t.trees = 1; // bosque solto na pradaria
+            } else if (t.type == Tile::Soil && hash01(x, y, seed + 77u) > 0.95f) {
+                t.trees = 1;
+            }
+            t.wood = 0;
+            t.cave = false;
+            t.caveFire = false;
+            // CAVERNAS: na montanha e rocha, algumas aberturas
+            if (t.type == Tile::Rock && b == Biome::Mountain && hash01(x, y, seed + 88u) > 0.88f) {
+                t.cave = true;
+            } else if (t.type == Tile::Rock && hash01(x, y, seed + 88u) > 0.96f) {
+                t.cave = true; // raras cavernas fora da montanha
+            }
             at(x, y) = t;
         }
     }
@@ -292,6 +309,38 @@ bool World::spawnPlant(int x, int y, PlantKind kind, int stage) {
     t.plant.kind = kind;
     t.plant.stage = (uint8_t)clampf((float)stage, 0.f, 2.f);
     return true;
+}
+
+int World::totalTrees() const {
+    int n = 0;
+    for (const auto& t : tiles_) n += t.trees;
+    return n;
+}
+
+bool World::chopTree(int x, int y, int& woodOut) {
+    woodOut = 0;
+    if (!inBounds(x, y)) return false;
+    TileData& t = at(x, y);
+    if (t.trees == 0) return false;
+    t.trees--;
+    // madeira: árvore grande dá mais
+    woodOut = 2 + (int)(t.trees > 2 ? 1 : 0) + irand(0, 1);
+    t.wood = (uint8_t)std::min(15, (int)t.wood + woodOut);
+    // derrubar abre espaço: nutrientes pro solo
+    t.nutrients = clampf(t.nutrients + 0.04f, 0.f, 1.f);
+    if (t.trees == 0 && chance(0.4f)) t.type = Tile::Grass; // clareira
+    return true;
+}
+
+int World::countCaves() const {
+    int n = 0;
+    for (const auto& t : tiles_) if (t.cave) n++;
+    return n;
+}
+
+bool World::isCave(int x, int y) const {
+    if (!inBounds(x, y)) return false;
+    return at(x, y).cave;
 }
 
 float World::lightLevel() const {
@@ -551,8 +600,18 @@ void World::update() {
             }
             // fruta madura cai da planta para o chão
             if (t.plant.kind == PlantKind::Fruit && t.plant.stage >= 2 && t.fallenFruit < 7) {
-                if (chance(0.0008f * (1.f + pollination_))) {
+                if (chance(0.0008f * (1.f + pollination_ + t.trees * 0.15f))) {
                     t.fallenFruit = (uint8_t)std::min(7, (int)t.fallenFruit + 1);
+                }
+            }
+            // ÁRVORES DÃO FRUTA: floresta densa sem planta pode brotar fruta sozinha
+            if (t.trees >= 2 && t.plant.kind == PlantKind::None && canHostPlant(t.type) &&
+                t.moisture > 0.25f && t.fertility > 0.25f) {
+                if (chance(0.0004f * t.trees * (1.f + pollination_))) {
+                    t.plant.kind = PlantKind::Fruit;
+                    t.plant.stage = 2; // árvore já madura, fruta pronta
+                    t.plant.gene.yield = clampf(gauss(1.2f, 0.2f), 0.5f, 2.f);
+                    t.plant.gene.growth = clampf(gauss(1.3f, 0.15f), 0.5f, 2.f);
                 }
             }
             // planta seca/morta devolve um pouco de nutrientes
@@ -568,21 +627,63 @@ void World::update() {
                 t.type = Tile::Grass;
             }
 
+            // ---- ÁRVORES VIVAS ----
+            if (t.trees > 0) {
+                // fogo mata árvore (abre clareira)
+                if (fire_[y * w_ + x] > 0 && chance(0.06f)) {
+                    t.trees--;
+                    t.nutrients = clampf(t.nutrients + 0.05f, 0.f, 1.f); // madeira vira cinza
+                    if (t.trees == 0 && chance(0.5f)) t.type = Tile::Grass; // clareira
+                }
+                // seca derruba árvore fraca
+                else if (t.moisture < 0.12f && chance(0.008f * (1.f + seasonTemp() * -0.5f))) {
+                    t.trees--;
+                    t.nutrients = clampf(t.nutrients + 0.03f, 0.f, 1.f);
+                    if (t.trees == 0) t.type = Tile::Grass;
+                }
+                // velhice: árvore muito velha cai (não temos idade individual, mas
+                // tiles densos "envelhecem" — abre espaço pra nova geração)
+                else if (t.trees >= 4 && chance(0.0002f)) {
+                    t.trees--;
+                    t.nutrients = clampf(t.nutrients + 0.04f, 0.f, 1.f);
+                }
+                // madeira envelhece e cai naturalmente no chão
+                if (chance(0.0005f)) {
+                    t.wood = (uint8_t)std::max(0, (int)t.wood - 1);
+                    t.nutrients = clampf(t.nutrients + 0.01f, 0.f, 1.f);
+                }
+                // árvore madura alimenta o solo (raízes, folhas)
+                if (chance(0.0008f * t.trees)) {
+                    t.fertility = clampf(t.fertility + 0.005f, 0.f, 1.f);
+                }
+            }
+            // crescimento: floresta úmida ganha árvore; solo bom perto de árvore também
+            if (t.type == Tile::Forest && t.trees < 5 && t.moisture > 0.35f && t.fertility > 0.3f) {
+                float grow = 0.00015f * t.moisture * (0.5f + seasonRain());
+                if (t.biome == Biome::Forest) grow *= 1.5f;
+                if (chance(grow)) t.trees = (uint8_t)std::min(5, (int)t.trees + 1);
+            }
+            // grama com árvore solitária pode virar floresta (o bosque cresce)
+            if (t.trees >= 2 && t.type == Tile::Grass && t.moisture > 0.4f && chance(0.0002f)) {
+                t.type = Tile::Forest;
+            }
+
             // ---- oceano vivo: biofilme e plancton em TODA a água ----
+            // abismo também produz (menos luz, mas o suficiente pra vida se espalhar)
             if (t.type == Tile::Water || t.type == Tile::DeepWater) {
-                // biofilme cresce em água rasa E profunda (devagar no abismo)
-                float bioLight = (t.type == Tile::Water) ? (0.3f + light * 0.7f) : (0.15f + light * 0.25f);
+                float bioLight = (t.type == Tile::Water) ? (0.3f + light * 0.7f)
+                                                         : (0.22f + light * 0.4f);
                 if (t.biofilm < 3 && t.nutrients > 0.08f) {
                     if (chance(0.02f * t.nutrients * bioLight)) t.biofilm++;
                 }
                 // plancton: se multiplica sozinho quando tem alimento e luz
                 if (t.biofilm > 0) {
                     t.nutrients = clampf(t.nutrients - 0.00004f * t.biofilm, 0.f, 1.f);
-                    float lit = (t.type == Tile::Water) ? light : light * 0.35f;
+                    float lit = (t.type == Tile::Water) ? light : light * 0.55f; // abismo não é deserto
                     if (t.plankton < 3 && t.nutrients > 0.03f) {
                         // REPRODUÇÃO: chance alta — o plancton se multiplica
                         float grow = 0.035f * lit * (0.5f + t.nutrients) * t.biofilm;
-                        if (t.type == Tile::DeepWater) grow *= 0.5f;
+                        if (t.type == Tile::DeepWater) grow *= 0.8f; // era 0.5 — abismo vivo
                         if (chance(grow)) t.plankton++;
                     }
                 }

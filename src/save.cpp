@@ -16,7 +16,7 @@ bool saveGame(World& w, CreatureSim& sim, Ecosystem& eco,
     std::ofstream f(path);
     if (!f.is_open()) return false;
 
-    f << "SKC_SAVE 5\n";
+    f << "SKC_SAVE 6\n";
     f << "meta " << day << " " << timeAcc << " " << camX << " " << camY << " " << zoom << "\n";
     f << "dims " << w.width() << " " << w.height() << "\n";
 
@@ -32,6 +32,7 @@ bool saveGame(World& w, CreatureSim& sim, Ecosystem& eco,
               << pg.growth << " " << pg.yield << " " << pg.toxicity
               << " " << pg.hardiness << " " << pg.cure
               << " " << pg.animal_spread << " " << pg.expansion << " " << pg.spore_range
+              << " " << (int)t.trees << " " << (int)t.wood
               << "\n";
         }
     }
@@ -135,6 +136,16 @@ bool loadGame(World& w, CreatureSim*& sim, Ecosystem*& eco, GodSystem*& god,
             PlantGene& pg = t.plant.gene;
             f >> pg.growth >> pg.yield >> pg.toxicity >> pg.hardiness >> pg.cure
               >> pg.animal_spread >> pg.expansion >> pg.spore_range;
+            if (ver >= 6) {
+                int trees, wood;
+                f >> trees >> wood;
+                t.trees = (uint8_t)trees;
+                t.wood = (uint8_t)wood;
+            } else {
+                // save antigo: floresta ganha árvores derivadas do tipo
+                t.trees = (t.type == Tile::Forest) ? 3 : 0;
+                t.wood = 0;
+            }
             t.type = (Tile)type;
         }
     }
@@ -256,6 +267,22 @@ bool loadGame(World& w, CreatureSim*& sim, Ecosystem*& eco, GodSystem*& god,
 
     f.close();
     w.rebiome(); // reatribui biomas dos tiles carregados
+    // cavernas: reatribui ~10% das rochas como cavernas (não persiste o hash exato)
+    {
+        // sem acesso a seed aqui — usa posição como hash
+        for (int y = 0; y < w.height(); y++) {
+            for (int x = 0; x < w.width(); x++) {
+                TileData& t = w.at(x, y);
+                t.cave = false;
+                t.caveFire = false;
+                if (t.type == Tile::Rock) {
+                    unsigned h = (unsigned)x * 374761393u ^ (unsigned)y * 668265263u;
+                    h = (h ^ (h >> 13)) * 1274126177u;
+                    if ((h & 0xFF) > 220) t.cave = true; // ~12%
+                }
+            }
+        }
+    }
     w.setTimeOfDay(timeAcc / SECONDS_PER_DAY);
     return true;
 }

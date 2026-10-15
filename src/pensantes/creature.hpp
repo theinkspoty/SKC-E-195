@@ -8,6 +8,12 @@ namespace skc {
 
 class Ecosystem; // fwd
 
+// entrada da crônica pessoal (linha do tempo da vida)
+struct LifeEvent {
+    unsigned day = 0;
+    std::string text;
+};
+
 // personalidade única — muda as decisões de TODO mundo
 struct Personality {
     float sexuality = 0.5f;
@@ -90,6 +96,8 @@ struct Emotions {
     float guilt = 0.f;    // fez algo errado
     float shame = 0.f;    // errado na frente dos outros
     float pride = 0.f;    // fez algo certo e foi visto
+    // lembrança dos mortos (luto com respeito)
+    float respect = 0.f;  // respeito pelos mortos / ancestrais
     // ---- novos: economia de bem-estar ----
     float happiness = 0.5f;     // felicidade geral (filhotes, amor, conforto)
     float security = 0.5f;      // se sente seguro (casa, par, comunidade, fogo)
@@ -230,6 +238,11 @@ struct Creature {
     Mind mind;
     Preferences prefs;
     Emotions em;
+    // INIMIGO DE SANGUE: sobrenome que este odia (feudo atravessa gerações)
+    std::string bloodEnemy;
+    // onde o ser querido morreu (local de luto/lembrança)
+    float graveX = -1.f, graveY = -1.f;
+    std::string graveName; // quem morreu
     std::vector<Bond> bonds;
     std::vector<SpeciesBond> speciesBonds;
     std::vector<TeachingRecord> teachings;
@@ -245,6 +258,9 @@ struct Creature {
     float sick_ = 0.f;
     // escrita: ideias registradas em pedra (sobrevivem à morte)
     std::vector<Idea> writtenIdeas;
+    // CRÔNICA PESSOAL: linha do tempo da vida (vira túmulo ao morrer)
+    std::vector<LifeEvent> chronicle;
+    void addChronicle(unsigned day, const std::string& text);
 
     void formIdea(IdeaKind kind, const std::string& text, float power, unsigned day, float morality = 0.5f);
     Idea* findIdea(const std::string& fragment);
@@ -288,9 +304,23 @@ struct Creature {
         nb.id = otherId;
         nb.lastContactDay = day;
         bonds.push_back(nb);
-        if (bonds.size() > 10) bonds.erase(bonds.begin());
+        // mantém os laços mais fortes (afeto), não FIFO
+        if (bonds.size() > 12) {
+            // nunca apaga o par (mateId)
+            auto weakest = bonds.begin();
+            for (auto it = bonds.begin(); it != bonds.end(); ++it) {
+                if (it->id == em.mateId) continue;
+                if (weakest == bonds.begin() && weakest->id == em.mateId) weakest = it;
+                else if (it->affection < weakest->affection &&
+                         !(weakest->id == em.mateId)) weakest = it;
+            }
+            if (weakest != bonds.end() && weakest->id != em.mateId) {
+                bonds.erase(weakest);
+            }
+        }
         return bonds.back();
     }
+
 
     SpeciesBond* speciesBond(int type) {
         for (auto& s : speciesBonds) if (s.faunaType == type) return &s;
@@ -328,9 +358,37 @@ struct Creature {
 
 std::string makeName();
 
+// TÚMULO: ossos + memória de quem foi. Fica no mundo pra sempre.
+struct Grave {
+    int id = 0;
+    float x = 0.f, y = 0.f;
+    std::string name, surname;
+    float age = 0.f;
+    bool male = true;
+    int children = 0;
+    int communityId = -1;
+    int parentA = -1, parentB = -1;
+    std::vector<LifeEvent> chronicle; // linha do tempo da vida
+};
+
+// tipo de evento — colore o log e define persistência
+enum class EvKind : uint8_t {
+    General = 0,
+    Birth,     // nascimento
+    Death,     // morte / luto
+    Discovery, // descoberta (caça, fogo, ferramenta)
+    Build,     // construção / comunidade
+    War,       // guerra / briga / vingança
+    Love,      // casal / casamento / perda do par
+    Idea,      // ideia nova / crença
+    Health     // doença / cura
+};
+
 struct SimEvent {
     std::string text;
-    float t = 0.f;
+    float t = 0.f;       // tempo vivo (fade)
+    EvKind kind = EvKind::General;
+    float life = 12.f;   // eventos importantes duram mais no log
 };
 
 class CreatureSim {
@@ -368,6 +426,11 @@ public:
     Community* community(int id);
     void updateCommunities(float dt, unsigned day);
 
+    // TÚMULOS: ossos e memórias no mundo
+    std::vector<Grave>& graves() { return graves_; }
+    const std::vector<Grave>& graves() const { return graves_; }
+    Grave* graveAt(float wx, float wy, float radius = 1.6f);
+
     // nível cultural da civilização (sobe com gerações)
     int culturalEra() const { return culturalEra_; }
     const char* culturalEraName() const;
@@ -385,7 +448,9 @@ private:
     std::vector<Creature> creatures_;
     std::vector<SimEvent> events_;
     std::vector<Community> communities_;
+    std::vector<Grave> graves_;
     int nextCommunityId_ = 1;
+    int nextGraveId_ = 1;
     int nextId_ = 1;
     int deaths_ = 0;
     int births_ = 0;
@@ -393,7 +458,9 @@ private:
     int totalGens_ = 0;    // gerações totais de pensantes
     int culturalEra_ = 0;  // era cultural global
 
-    void addEvent(const std::string& s);
+    void addEvent(const std::string& s, EvKind kind = EvKind::General);
+    // reputação com motivo visível no log (nunca "do nada")
+    void changeReputation(Creature& c, float delta, unsigned day, const char* why);
     void updateOne(Creature& c, float dt, unsigned day);
     void updateEmotions(Creature& c, float dt, unsigned day);
     void behavior(Creature& c, float dt, unsigned day);
@@ -402,6 +469,9 @@ private:
     bool tryEat(Creature& c, float dt);
     bool tryDrink(Creature& c, float dt);
     bool tryEatCorpse(Creature& c, float dt);
+    // CAÇADA PRIMITIVA: pensante desesperado e ousado ataca bicho pequeno
+    // — descoberta rara, dá muita energia, mas exige coragem e pesa na consciência
+    bool tryHuntFauna(Creature& c, float dt, unsigned day);
     void tryReproduce(Creature& a, std::vector<Creature>& out);
     void teachNearby(float dt);
     void socializeNearby(Creature& c, float dt, unsigned day);

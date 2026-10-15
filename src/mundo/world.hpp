@@ -74,6 +74,14 @@ struct TileData {
     uint8_t corpse = 0;  // carne fresca 0-15 (estágio: 15=fresco .. 1=quase ossos)
     uint8_t bones = 0;   // ossos 0-15 (decai bem mais devagar)
     uint8_t fallenFruit = 0; // fruta caída no chão 0-7 — apodrece e vira nutriente
+    // ÁRVORES: densidade viva por tile (0-5). Crescem, dão fruta, morrem de velhice.
+    uint8_t trees = 0;
+    // madeira: recurso extraído de árvores (0-15) — constrói, alimenta fogueira
+    uint8_t wood = 0;
+    // CAVERNA: entrada na rocha. Abrigo natural — abrigo, fogueira, lar.
+    bool cave = false;
+    // tem fogueira acesa dentro/acima desta caverna/comunidade
+    bool caveFire = false;
     Plant plant;
 };
 
@@ -141,6 +149,14 @@ public:
     int countBiome(Biome b) const;
     // reatribui biomas a partir dos tiles (após carregar save)
     void rebiome();
+
+    // ÁRVORES
+    int totalTrees() const;
+    // derruba uma árvore: devolve madeira, abre clareira
+    bool chopTree(int x, int y, int& woodOut);
+    // CAVERNAS
+    int countCaves() const;
+    bool isCave(int x, int y) const;
 
 private:
     int w_, h_;

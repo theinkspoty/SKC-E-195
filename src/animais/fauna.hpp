@@ -23,9 +23,11 @@ enum class FaunaType : uint8_t {
     Whale,     // baleia: herbívoro que voltou ao mar
     Worm,      // verme: decompositor — acelera a morte a virar vida
     Trilobite, // trilobita: fundo do mar, ícone do Cambriano
-    Insect     // inseto: poliniza e é comida de passarinho
+    Insect,    // inseto: poliniza e é comida de passarinho
+    Placoderm, // placodermio (Dunkleosteus): armadura de Devoniano
+    Lungfish   // peixe-pulmão: ponte entre mar e terra
 };
-constexpr int FAUNA_TYPE_COUNT = 16;
+constexpr int FAUNA_TYPE_COUNT = 18;
 
 enum class FaunaState : uint8_t {
     Idle = 0,
@@ -107,11 +109,16 @@ struct Fauna {
                type == FaunaType::Shark ||
                type == FaunaType::Bear;
     }
-    bool canFly() const { return type == FaunaType::SkyPredator; }
+    bool canFly() const {
+        return type == FaunaType::SkyPredator ||
+               type == FaunaType::Insect ||
+               type == FaunaType::SmallBird;
+    }
     bool fullyAquatic() const {
         return type == FaunaType::Medusa || type == FaunaType::Fish ||
                type == FaunaType::SeaPredator || type == FaunaType::Shark ||
-               type == FaunaType::Whale || type == FaunaType::Trilobite;
+               type == FaunaType::Whale || type == FaunaType::Trilobite ||
+               type == FaunaType::Placoderm;
     }
     // espécies que vivem em grupo (rebanho/matilha/cardume/enxame)
     bool gregarious() const {
@@ -119,7 +126,8 @@ struct Fauna {
                type == FaunaType::Fish || type == FaunaType::SmallBird ||
                type == FaunaType::Turtle || type == FaunaType::Bear ||
                type == FaunaType::Trilobite || type == FaunaType::Insect ||
-               type == FaunaType::Worm;
+               type == FaunaType::Worm || type == FaunaType::Placoderm ||
+               type == FaunaType::Lungfish;
     }
     // decompositor: acelera a transformação de morte em nutrientes
     bool decomposer() const { return type == FaunaType::Worm || type == FaunaType::Scavenger; }
@@ -179,6 +187,8 @@ struct LifeLadder {
     bool worms = false;
     bool trilobites = false;
     bool insects = false;
+    bool placoderms = false;
+    bool lungfish = false;
     bool sages = false;
 
     float planktonTiles = 0.f;
@@ -198,6 +208,8 @@ struct LifeLadder {
     int wormCount = 0;
     int trilobiteCount = 0;
     int insectCount = 0;
+    int placodermCount = 0;
+    int lungfishCount = 0;
     int sageCount = 0;
 
     std::string nextHint() const;
@@ -305,7 +317,11 @@ private:
     void updateWorm(Fauna& f, float dt);
     void updateTrilobite(Fauna& f, float dt);
     void updateInsect(Fauna& f, float dt);
+    void updatePlacoderm(Fauna& f, float dt);
+    void updateLungfish(Fauna& f, float dt);
     void huntPrey(Fauna& f, float dt, const FaunaType* preyTypes, int nPrey, float speedMul);
+    // conta tiles de água (e abismo) num raio — baleia precisa de oceano de verdade
+    void waterBodySize(float x, float y, int& waterTiles, int& deepTiles) const;
 
     void wanderIn(Fauna& f, float dt, bool waterOnly);
     void moveToward(Fauna& f, float tx, float ty, float dt, float mul, bool waterOnly);

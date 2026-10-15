@@ -308,6 +308,8 @@ static SDL_Color faunaCol(int type) {
         case 13: return {180, 140, 110, 255};
         case 14: return {160, 130, 90, 255};
         case 15: return {200, 220, 80, 255};
+        case 16: return {70, 110, 110, 255};
+        case 17: return {130, 120, 80, 255};
         default: return {200, 200, 200, 255};
     }
 }
@@ -390,11 +392,15 @@ void Hud::draw(SDL_Renderer* r, const HudState& st) {
         text(r, fontSmall_, 96 + sw + 8, 32, st.phaseName, {160, 175, 190, 255});
     }
 
-    // centro: velocidade / pausa
+    // centro: velocidade / pausa / cambriano
     {
         int bw = 90;
         int bx = (winW - bw) / 2;
-        if (st.paused) {
+        if (st.eco && st.eco->cambrianActive()) {
+            // Cambriano pulsando — o mar ferve
+            Uint8 pulse = (Uint8)(140 + 80.f * std::sin((float)SDL_GetTicks() * 0.008f));
+            chip(r, bx - 40, 14, bw + 80, 24, "CAMBRIANO!", {255, 200, 120, 255}, pulse);
+        } else if (st.paused) {
             chip(r, bx, 14, bw, 24, "PAUSADO", {255, 180, 120, 255}, 180);
         } else {
             snprintf(buf, sizeof(buf), "x%.1f", st.speed);
@@ -444,7 +450,9 @@ void Hud::draw(SDL_Renderer* r, const HudState& st) {
     // ============ PAINEL DE INSPERÇÃO (rolável) ============
     // troca de ser zera a rolagem
     {
-        int curId = st.selected ? st.selected->id : (st.selectedFauna ? st.selectedFauna->id : -1);
+        int curId = st.selected ? st.selected->id
+                  : st.selectedGrave ? 1000000 + st.selectedGrave->id
+                  : (st.selectedFauna ? st.selectedFauna->id : -1);
         if (curId != lastInspectId_) {
             scrollInspect_ = 0.f;
             lastInspectId_ = curId;
@@ -452,11 +460,12 @@ void Hud::draw(SDL_Renderer* r, const HudState& st) {
     }
     int inspectH = 0;
     if (st.selected) inspectH = std::min(520, winH - topH - 100);
+    else if (st.selectedGrave) inspectH = std::min(440, winH - topH - 100);
     else if (st.selectedFauna) inspectH = 210;
     int inspectY = y;
 
     // rolagem: roda do mouse sobre o painel
-    bool mouseOverInspect = st.selected || st.selectedFauna;
+    bool mouseOverInspect = st.selected || st.selectedFauna || st.selectedGrave;
     if (mouseOverInspect && st.uiWheel != 0.f) {
         float mxw = st.mouseWinX, myw = st.mouseWinY;
         if (mxw >= leftX && mxw <= leftX + leftW && myw >= inspectY && myw <= inspectY + inspectH) {
@@ -464,7 +473,74 @@ void Hud::draw(SDL_Renderer* r, const HudState& st) {
         }
     }
 
-    if (st.selected) {
+    // ---- TÚMULO: linha do tempo da vida ----
+    if (st.selectedGrave) {
+        const Grave& g = *st.selectedGrave;
+        panel(r, leftX, inspectY, leftW, inspectH, 205);
+        std::string title = g.name + (g.surname.empty() ? "" : " " + g.surname);
+        panelTitle(r, leftX, inspectY, leftW, title, {190, 180, 160, 255});
+        SDL_Rect clip = {leftX + 2, inspectY + 32, leftW - 4, inspectH - 36};
+        SDL_RenderSetClipRect(r, &clip);
+        int px = leftX + 12;
+        int ty = inspectY + 38 - (int)scrollInspect_;
+        char line[256];
+        snprintf(line, sizeof(line), "%s   %d dias   filhos %d",
+                 g.male ? "macho" : "femea", (int)g.age, g.children);
+        text(r, fontSmall_, px, ty, line, {180, 175, 165, 255});
+        ty += 16;
+        section(r, px, ty, leftW - 24, "CRONICA DA VIDA", {220, 200, 150, 255});
+        ty += 14;
+        if (g.chronicle.empty()) {
+            text(r, fontSmall_, px, ty, "sem registros", {130, 130, 140, 255}, false);
+            ty += 12;
+        } else {
+            for (const auto& ev : g.chronicle) {
+                SDL_Color lc = {190, 195, 200, 255};
+                // destaca morte e nascimento
+                if (ev.text.find("partiu") != std::string::npos ||
+                    ev.text.find("nasceu") != std::string::npos)
+                    lc = {230, 200, 150, 255};
+                else if (ev.text.find("odeio") != std::string::npos ||
+                         ev.text.find("vinganca") != std::string::npos)
+                    lc = {220, 130, 120, 255};
+                else if (ev.text.find("acasalou") != std::string::npos ||
+                         ev.text.find("filho") != std::string::npos ||
+                         ev.text.find("adot") != std::string::npos)
+                    lc = {240, 160, 180, 255};
+                snprintf(line, sizeof(line), "dia %u: %s", ev.day, ev.text.c_str());
+                // quebra linha longa
+                std::string msg = line;
+                if (msg.size() > 48) msg = msg.substr(0, 46) + "..";
+                text(r, fontSmall_, px, ty, msg, lc, false);
+                ty += 12;
+            }
+        }
+        // scrollbar
+        int contentH = ty + (int)scrollInspect_ - inspectY - 38;
+        int viewH = inspectH - 36;
+        if (contentH > viewH) {
+            int sbX = leftX + leftW - 6;
+            SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(r, 40, 50, 65, 180);
+            SDL_Rect track = {sbX, inspectY + 34, 3, inspectH - 40};
+            SDL_RenderFillRect(r, &track);
+            float frac = (float)viewH / contentH;
+            int thumbH = std::max(20, (int)(track.h * frac));
+            int maxScroll = contentH - viewH;
+            float sp = maxScroll > 0 ? scrollInspect_ / maxScroll : 0.f;
+            int thumbY = track.y + (int)((track.h - thumbH) * sp);
+            SDL_SetRenderDrawColor(r, 180, 160, 120, 220);
+            SDL_Rect thumb = {sbX, thumbY, 3, thumbH};
+            SDL_RenderFillRect(r, &thumb);
+        }
+        SDL_RenderSetClipRect(r, nullptr);
+        {
+            int maxScroll = std::max(0, contentH - viewH);
+            scrollInspect_ = clampf(scrollInspect_, 0.f, (float)maxScroll);
+        }
+        y = inspectY + inspectH + 8;
+    }
+    else if (st.selected) {
         const Creature& c = *st.selected;
         panel(r, leftX, inspectY, leftW, inspectH, 205);
         // título
@@ -483,6 +559,60 @@ void Hud::draw(SDL_Renderer* r, const HudState& st) {
                  stateName(c.state), c.age, c.children, c.g.intelligence, c.culturalLevel);
         text(r, fontSmall_, px, ty, line, {200, 210, 220, 255});
         ty += 18;
+
+        // ---- COMPANHEIRO (monogamia) ----
+        {
+            const Creature* mate = c.em.mateId >= 0 ? st.sims->get(c.em.mateId) : nullptr;
+            if (mate && mate->alive()) {
+                snprintf(line, sizeof(line), "COMPANHEIRO: %s %s  amor %.2f",
+                         mate->name.c_str(),
+                         mate->surname == c.surname && !c.surname.empty() ? "(mesma linhagem)" : "",
+                         c.em.love);
+                text(r, fontSmall_, px, ty, line, {255, 150, 180, 255});
+                ty += 14;
+            } else if (c.em.mateId >= 0) {
+                // tinha par, perdeu
+                const Creature* old = st.sims->get(c.em.mateId);
+                snprintf(line, sizeof(line), "viuvo de %s   tristeza %.2f",
+                         old ? old->name.c_str() : "?", c.em.grief);
+                text(r, fontSmall_, px, ty, line, {170, 150, 190, 255});
+                ty += 14;
+            } else if (!c.juvenile()) {
+                snprintf(line, sizeof(line), "solteiro   desejo familia %.2f", c.em.desireFamily);
+                text(r, fontSmall_, px, ty, line, {160, 170, 180, 255});
+                ty += 14;
+            }
+        }
+
+        // melhor amigo
+        {
+            int bfId = -1;
+            float bfAff = 0.35f;
+            for (const auto& b : c.bonds) {
+                if (b.affection < bfAff || b.id == c.em.mateId) continue;
+                bfId = b.id;
+                bfAff = b.affection;
+            }
+            if (bfId >= 0) {
+                const Creature* fr = st.sims->get(bfId);
+                if (fr && fr->alive()) {
+                    snprintf(line, sizeof(line), "AMIGO: %s  afeto %.2f", fr->name.c_str(), bfAff);
+                    text(r, fontSmall_, px, ty, line, {140, 210, 180, 255});
+                    ty += 14;
+                }
+            }
+        }
+        // inimigo de sangue / túmulo
+        if (!c.bloodEnemy.empty()) {
+            snprintf(line, sizeof(line), "INIMIGO DE SANGUE: %s", c.bloodEnemy.c_str());
+            text(r, fontSmall_, px, ty, line, {230, 120, 100, 255});
+            ty += 14;
+        }
+        if (c.graveX >= 0.f && !c.graveName.empty()) {
+            snprintf(line, sizeof(line), "tumulo de %s", c.graveName.c_str());
+            text(r, fontSmall_, px, ty, line, {160, 150, 170, 255});
+            ty += 14;
+        }
 
         // vitais lado a lado
         text(r, fontSmall_, px, ty, "Energia", {180, 180, 180, 255});
@@ -534,12 +664,12 @@ void Hud::draw(SDL_Renderer* r, const HudState& st) {
             {"solidao", c.em.loneliness, {150, 150, 170, 255}},
             {"medo", c.em.fear, {140, 160, 230, 255}},
             {"raiva", c.em.anger, {230, 90, 70, 255}},
-            {"tristeza", c.em.grief, {160, 130, 200, 255}},
+            {"LUTO", c.em.grief, {180, 140, 210, 255}},
+            {"respeito", c.em.respect, {200, 190, 160, 255}},
             {"familia", c.em.desireFamily, {240, 160, 190, 255}},
             {"orgulho", c.em.pride, {140, 200, 220, 255}},
             {"culpa", c.em.guilt, {180, 120, 160, 255}},
             {"vergonha", c.em.shame, {160, 100, 140, 255}},
-            {"curiosidade", c.em.curiosity, {120, 220, 240, 255}},
         };
         for (int i = 0; i < 14; i++) {
             if (i % 2 == 0 && i > 0) ty += 11;
@@ -721,9 +851,9 @@ void Hud::draw(SDL_Renderer* r, const HudState& st) {
             if (c.em.mateId >= 0) {
                 const Creature* mate = st.sims->get(c.em.mateId);
                 if (mate && mate->alive()) {
-                    snprintf(line, sizeof(line), "par: %s (amor %.2f)", mate->name.c_str(), c.em.love);
+                    snprintf(line, sizeof(line), "companheiro: %s (amor %.2f)", mate->name.c_str(), c.em.love);
                     text(r, fontSmall_, px, ty, line, {240, 140, 170, 255}, false);
-                    ty += 13;
+                    ty += 12;
                 }
             }
             if (!c.childrenIds.empty()) {
@@ -869,126 +999,162 @@ void Hud::draw(SDL_Renderer* r, const HudState& st) {
         scrollInspect_ = 0.f;
     }
 
-    // ============ ESCADA DA VIDA ============
+    // ============ ESCADA DA VIDA — compacta (21 linhas) ============
     if (st.showLadder && st.eco) {
         LifeLadder L = st.eco->ladder();
-        const int lh = 348;
+        const int rowH = 12;
+        const int nRows = 21;
+        const int lh = 48 + nRows * rowH + 20;
         int ly = y;
         if (ly + lh > winH - 80) ly = topH + 8;
         panel(r, leftX, ly, leftW, lh, 185);
-        text(r, fontBig_, leftX + 10, ly + 6, eraName(st.eco->era()), {255, 210, 130, 255});
+        text(r, fontBig_, leftX + 10, ly + 4, eraName(st.eco->era()), {255, 210, 130, 255});
         std::string story = eraStory(st.eco->era());
         if (story.size() > 42) story = story.substr(0, 40) + "..";
-        text(r, fontSmall_, leftX + 10, ly + 28, story, {160, 180, 195, 255}, false);
+        text(r, fontSmall_, leftX + 10, ly + 24, story, {160, 180, 195, 255}, false);
         SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
         SDL_SetRenderDrawColor(r, 80, 150, 180, 60);
-        SDL_RenderDrawLine(r, leftX + 10, ly + 46, leftX + leftW - 10, ly + 46);
+        SDL_RenderDrawLine(r, leftX + 10, ly + 40, leftX + leftW - 10, ly + 40);
         auto row = [&](int i, const char* n, bool has, int count, const char* need) {
-            int yy = ly + 52 + i * 14;
+            int yy = ly + 44 + i * rowH;
             SDL_Color c = has ? SDL_Color{120, 230, 140, 255} : SDL_Color{100, 110, 120, 255};
             snprintf(buf, sizeof(buf), "%s %s", has ? "*" : " ", n);
             text(r, fontSmall_, leftX + 10, yy, buf, c, false);
             if (has && count > 0) {
                 snprintf(buf, sizeof(buf), "%d", count);
-                text(r, fontSmall_, leftX + 150, yy, buf, {150, 170, 160, 255}, false);
+                text(r, fontSmall_, leftX + 158, yy, buf, {150, 170, 160, 255}, false);
             } else if (!has) {
-                text(r, fontSmall_, leftX + 130, yy, need, {85, 95, 105, 255}, false);
+                text(r, fontSmall_, leftX + 132, yy, need, {85, 95, 105, 255}, false);
             }
         };
         row(0, "Microbioma", L.microbe, 0, "agua+minerais");
         row(1, "Plancton", L.plankton, 0, "luz+nutrientes");
         row(2, "Plantas", L.plants, 0, "terra umida");
         row(3, "Medusa", L.medusa, L.medusaCount, "plancton (mar)");
-        row(4, "Trilobita", L.trilobites, L.trilobiteCount, "biofilme (fundo)");
+        row(4, "Trilobita", L.trilobites, L.trilobiteCount, "biofilme");
         row(5, "Peixe", L.fish, L.fishCount, "medusas");
         row(6, "Anfibio", L.amphibian, L.amphibCount, "peixe + margem");
-        row(7, "Tartaruga", L.turtles, L.turtleCount, "anfibio + costa");
-        row(8, "Herbivoro", L.herbivores, L.herbCount, "anfibio + plantas");
-        row(9, "Inseto", L.insects, L.insectCount, "plantas");
-        row(10, "Piscador", L.seaPred, L.seaPredCount, "peixes (mar)");
-        row(11, "Tubarao", L.sharks, L.sharkCount, "piscadores");
-        row(12, "Baleia", L.whales, L.whaleCount, "herbivoro que nada");
-        row(13, "Lobo", L.landPred, L.landPredCount, "herbivoros (terra)");
-        row(14, "Urso", L.bears, L.bearCount, "lobo perto d'agua");
-        row(15, "Falcon", L.skyPred, L.skyPredCount, "carroneiros (ar)");
-        row(16, "Carroneiro", L.scavengers, L.scavCount, "mortes");
-        row(17, "Verme", L.worms, L.wormCount, "carcoas no chao");
-        row(18, "Pensantes", L.sages, L.sageCount, "pressao+tempo");
-        text(r, fontSmall_, leftX + 10, ly + lh - 18, L.nextHint(), {230, 200, 140, 255}, false);
+        row(7, "Peixulmao", L.lungfish, L.lungfishCount, "peixe costa");
+        row(8, "Tartaruga", L.turtles, L.turtleCount, "anfibio + costa");
+        row(9, "Herbivoro", L.herbivores, L.herbCount, "anfibio + plantas");
+        row(10, "Inseto", L.insects, L.insectCount, "plantas");
+        row(11, "Piscador", L.seaPred, L.seaPredCount, "peixes (mar)");
+        row(12, "Placodermio", L.placoderms, L.placodermCount, "peixe grande");
+        row(13, "Tubarao", L.sharks, L.sharkCount, "piscadores");
+        row(14, "Baleia", L.whales, L.whaleCount, "herbivoro + oceano");
+        row(15, "Lobo", L.landPred, L.landPredCount, "herbivoros");
+        row(16, "Urso", L.bears, L.bearCount, "lobo + agua");
+        row(17, "Falcon", L.skyPred, L.skyPredCount, "carroneiros");
+        row(18, "Carroneiro", L.scavengers, L.scavCount, "mortes");
+        row(19, "Verme", L.worms, L.wormCount, "carcoas");
+        row(20, "Pensantes", L.sages, L.sageCount, "pressao+tempo");
+        text(r, fontSmall_, leftX + 10, ly + lh - 16, L.nextHint(), {230, 200, 140, 255}, false);
     }
 
-    // ============ COLUNA DE ESPÉCIES (direita) ============
+    // ============ COLUNA DE POPULAÇÃO (direita) — compacta, espécies vivas primeiro ============
+    int popBottomY = topH + 8;
     if (st.eco && winW > 700) {
-        const int rw = 118;
-        const int rh = 14 * (FAUNA_TYPE_COUNT + 1) + 28;
+        const int rw = 122;
+        // conta vivas primeiro pra altura dinâmica
+        int counts[FAUNA_TYPE_COUNT] = {};
+        int living = 0;
+        for (const auto& f : st.eco->all()) if (f.alive()) counts[(int)f.type]++;
+        for (int i = 0; i < FAUNA_TYPE_COUNT; i++) if (counts[i] > 0) living++;
+        int sages = st.sims ? st.sims->aliveCount() : 0;
+        if (sages > 0) living++;
+        int groupsN = st.eco->groupCount();
+        // resumo do mundo
+        int treesN = st.world ? st.world->totalTrees() : 0;
+        int rows = living + 2; // pensantes + árvores/resumo
+        const int rowH = 13;
+        const int rh = 22 + rows * rowH + 8;
         int rxp = winW - rw - 10;
         int ryp = topH + 8;
-        // não cobre o tile info (que fica em winH-78 area do minimapa) — fica no topo
-        panel(r, rxp, ryp, rw, rh, 150);
-        text(r, fontSmall_, rxp + 8, ryp + 4, "POPULACAO", {140, 210, 230, 255});
-        auto& all = st.eco->all();
-        int counts[FAUNA_TYPE_COUNT] = {};
-        for (const auto& f : all) if (f.alive()) counts[(int)f.type]++;
-        int totalFauna = 0;
-        for (int i = 0; i < FAUNA_TYPE_COUNT; i++) totalFauna += counts[i];
-        int sages = st.sims ? st.sims->aliveCount() : 0;
-        int ry = ryp + 20;
-        for (int i = 0; i < FAUNA_TYPE_COUNT; i++) {
-            if (counts[i] == 0 && i > 2) continue; // esconde extintos (mantém base aquática)
-            SDL_SetRenderDrawColor(r, faunaCol(i).r, faunaCol(i).g, faunaCol(i).b, 255);
-            SDL_Rect dot = {rxp + 8, ry + 2, 7, 7};
+        popBottomY = ryp + rh;
+        panel(r, rxp, ryp, rw, rh, 155);
+        text(r, fontSmall_, rxp + 8, ryp + 3, "POPULACAO", {140, 210, 230, 255});
+        int ry = ryp + 18;
+        auto rowPop = [&](int typeIdx, const char* name, int count) {
+            if (count <= 0) return;
+            SDL_SetRenderDrawColor(r, faunaCol(typeIdx).r, faunaCol(typeIdx).g, faunaCol(typeIdx).b, 255);
+            SDL_Rect dot = {rxp + 6, ry + 2, 6, 6};
             SDL_RenderFillRect(r, &dot);
-            snprintf(buf, sizeof(buf), "%s", faunaName((FaunaType)i));
-            // corta nome longo
-            std::string nm = buf;
-            if (nm.size() > 9) nm = nm.substr(0, 8) + ".";
-            text(r, fontSmall_, rxp + 20, ry, nm,
-                 counts[i] > 0 ? SDL_Color{200, 210, 220, 255} : SDL_Color{90, 100, 110, 255}, false);
-            if (counts[i] > 0) {
-                snprintf(buf, sizeof(buf), "%d", counts[i]);
-                text(r, fontSmall_, rxp + rw - 30, ry, buf, {170, 190, 200, 255}, false);
-            }
-            ry += 14;
-        }
+            std::string nm = name;
+            if (nm.size() > 10) nm = nm.substr(0, 9) + ".";
+            text(r, fontSmall_, rxp + 16, ry, nm, {200, 210, 220, 255}, false);
+            snprintf(buf, sizeof(buf), "%d", count);
+            text(r, fontSmall_, rxp + rw - 28, ry, buf, {170, 190, 200, 255}, false);
+            ry += rowH;
+        };
+        // vivos primeiro (ordem do enum, mas só quem existe)
+        for (int i = 0; i < FAUNA_TYPE_COUNT; i++)
+            rowPop(i, faunaName((FaunaType)i), counts[i]);
         // pensantes
-        SDL_SetRenderDrawColor(r, 140, 180, 240, 255);
-        SDL_Rect pdot = {rxp + 8, ry + 2, 7, 7};
-        SDL_RenderFillRect(r, &pdot);
-        text(r, fontSmall_, rxp + 20, ry, "Pensante", {200, 210, 220, 255}, false);
-        snprintf(buf, sizeof(buf), "%d", sages);
-        text(r, fontSmall_, rxp + rw - 30, ry, buf, {170, 190, 200, 255}, false);
-        ry += 14;
-        // grupos sociais
-        if (st.eco && st.eco->groupCount() > 0) {
-            SDL_SetRenderDrawColor(r, 200, 200, 140, 255);
-            SDL_Rect gdot = {rxp + 8, ry + 2, 7, 7};
-            SDL_RenderFillRect(r, &gdot);
-            snprintf(buf, sizeof(buf), "Grupos %d", st.eco->groupCount());
-            text(r, fontSmall_, rxp + 20, ry, buf, {200, 200, 160, 255}, false);
+        if (sages > 0) {
+            SDL_SetRenderDrawColor(r, 140, 180, 240, 255);
+            SDL_Rect pdot = {rxp + 6, ry + 2, 6, 6};
+            SDL_RenderFillRect(r, &pdot);
+            text(r, fontSmall_, rxp + 16, ry, "Pensante", {200, 210, 220, 255}, false);
+            snprintf(buf, sizeof(buf), "%d", sages);
+            text(r, fontSmall_, rxp + rw - 28, ry, buf, {170, 190, 200, 255}, false);
+            ry += rowH;
         }
-        (void)totalFauna;
+        // resumo: grupos + árvores
+        if (groupsN > 0) {
+            SDL_SetRenderDrawColor(r, 200, 200, 140, 255);
+            SDL_Rect gdot = {rxp + 6, ry + 2, 6, 6};
+            SDL_RenderFillRect(r, &gdot);
+            snprintf(buf, sizeof(buf), "Grupos %d", groupsN);
+            text(r, fontSmall_, rxp + 16, ry, buf, {200, 200, 160, 255}, false);
+            ry += rowH;
+        }
+        if (treesN > 0) {
+            // mini árvore: 2 pixels
+            SDL_SetRenderDrawColor(r, 100, 75, 45, 255);
+            SDL_RenderDrawPoint(r, rxp + 8, ry + 5);
+            SDL_SetRenderDrawColor(r, 55, 130, 45, 255);
+            SDL_RenderDrawPoint(r, rxp + 8, ry + 3);
+            SDL_RenderDrawPoint(r, rxp + 8, ry + 2);
+            snprintf(buf, sizeof(buf), "Arvores %d", treesN);
+            text(r, fontSmall_, rxp + 16, ry, buf, {160, 190, 150, 255}, false);
+        }
     }
 
-    // ============ LOG DE EVENTOS ============
+    // ============ LOG DE EVENTOS — cor por categoria ============
     if (st.events && !st.events->empty()) {
-        int show = (int)std::min<size_t>(st.events->size(), 6);
-        int logW = 420;
-        int logH = show * 15 + 10;
+        int show = (int)std::min<size_t>(st.events->size(), 8);
+        int logW = 440;
+        int logH = show * 15 + 18;
         int lx = winW - logW - 12;
         int ly = winH - 78 - logH;
         // não colide com coluna de espécies
-        int popBottom = topH + 8 + 14 * (FAUNA_TYPE_COUNT + 2) + 40;
-        if (ly < popBottom) ly = popBottom;
+        if (ly < popBottomY + 6) ly = popBottomY + 6;
         if (ly < topH + 4) ly = topH + 4;
         panel(r, lx, ly, logW, logH, 140);
-        text(r, fontSmall_, lx + 6, ly + 2, "EVENTOS", {140, 190, 210, 200});
+        text(r, fontSmall_, lx + 6, ly + 2, "CRONICA", {140, 190, 210, 200});
+        // cor por tipo de evento
+        auto evColor = [](EvKind k) -> SDL_Color {
+            switch (k) {
+                case EvKind::Birth:     return {160, 220, 255, 255};
+                case EvKind::Death:     return {180, 160, 200, 255};
+                case EvKind::Discovery: return {255, 220, 120, 255};
+                case EvKind::Build:     return {140, 220, 150, 255};
+                case EvKind::War:       return {255, 130, 110, 255};
+                case EvKind::Love:      return {255, 160, 190, 255};
+                case EvKind::Idea:      return {140, 220, 240, 255};
+                case EvKind::Health:    return {230, 200, 140, 255};
+                default:                return {170, 195, 175, 255};
+            }
+        };
         for (int i = 0; i < show; i++) {
             const SimEvent& e = (*st.events)[st.events->size() - show + i];
-            float fade = clampf(1.4f - e.t * 0.012f, 0.25f, 1.f);
-            SDL_Color col = {170, 195, 175, (Uint8)(235 * fade)};
+            // eventos importantes degradam mais devagar
+            float fade = clampf(1.4f - e.t * (1.f / e.life), 0.2f, 1.f);
+            SDL_Color col = evColor(e.kind);
+            col.a = (Uint8)(240 * fade);
             std::string msg = e.text;
-            if (msg.size() > 52) msg = msg.substr(0, 50) + "..";
-            text(r, fontSmall_, lx + 8, ly + 18 + i * 15, msg, col, false);
+            if (msg.size() > 54) msg = msg.substr(0, 52) + "..";
+            text(r, fontSmall_, lx + 8, ly + 16 + i * 15, msg, col, false);
         }
     }
 
@@ -1034,8 +1200,17 @@ void Hud::draw(SDL_Renderer* r, const HudState& st) {
         int tx = (int)st.mouseX, ty2 = (int)st.mouseY;
         if (st.world->inBounds(tx, ty2)) {
             const TileData& t = st.world->at(tx, ty2);
-            snprintf(buf, sizeof(buf), "%s (%s)  nutr %.2f  planct %u  carca %u",
-                     tileName(t.type), biomeName(t.biome), t.nutrients, t.plankton, t.corpse);
+            snprintf(buf, sizeof(buf), "%s (%s)  arv %u  lenha %u  planct %u",
+                     tileName(t.type), biomeName(t.biome), t.trees, t.wood, t.plankton);
+            if (t.plant.kind != PlantKind::None) {
+                snprintf(buf, sizeof(buf), "%s  %s%s  fruta-c %u",
+                         buf,
+                         t.plant.kind == PlantKind::Fruit ? "fruta" : "veneno",
+                         t.plant.stage >= 2 ? "*" : "",
+                         t.fallenFruit);
+            } else if (t.fallenFruit > 0) {
+                snprintf(buf, sizeof(buf), "%s  fruta-chao %u", buf, t.fallenFruit);
+            }
             int tw = textWidth(fontSmall_, buf);
             int px2 = 12;
             int py2 = winH - 78 - 24;

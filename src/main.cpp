@@ -18,6 +18,59 @@ using namespace skc;
 
 static const float SIM_DT = 1.f / 30.f;
 
+// ---- partículas de clima (chuva/neve) — procedural, sem asset ----
+struct WeatherP {
+    float x, y, vy, vx;
+    bool snow;
+};
+static WeatherP g_weather[220];
+static bool g_weatherInit = false;
+
+static void updateWeather(int winW, int winH, float dt, int season, float light) {
+    if (!g_weatherInit) {
+        for (auto& p : g_weather) {
+            p.x = frand(0.f, (float)winW);
+            p.y = frand(0.f, (float)winH);
+            p.vy = frand(80.f, 180.f);
+            p.vx = frand(-20.f, 20.f);
+            p.snow = false;
+        }
+        g_weatherInit = true;
+    }
+    bool wantSnow = (season == 3); // inverno
+    bool wantRain = (season == 0 || season == 2) && light > 0.3f; // primavera/outono dia
+    if (!wantSnow && !wantRain) return;
+    for (auto& p : g_weather) {
+        p.snow = wantSnow;
+        p.vy = wantSnow ? frand(15.f, 40.f) : frand(120.f, 220.f);
+        p.x += p.vx * dt * (wantSnow ? 0.3f : 1.f);
+        p.y += p.vy * dt;
+        if (p.y > (float)winH) { p.y = -4.f; p.x = frand(0.f, (float)winW); }
+        if (p.x < -4.f) p.x = (float)winW + 2.f;
+        if (p.x > (float)winW + 4.f) p.x = -2.f;
+    }
+}
+
+static void drawWeather(SDL_Renderer* r, int winW, int winH, int season, float light) {
+    (void)winW; (void)winH;
+    bool wantSnow = (season == 3);
+    bool wantRain = (season == 0 || season == 2) && light > 0.3f;
+    if (!wantSnow && !wantRain) return;
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    if (wantSnow) {
+        SDL_SetRenderDrawColor(r, 230, 235, 245, 180);
+        for (auto& p : g_weather) {
+            SDL_RenderDrawPoint(r, (int)p.x, (int)p.y);
+        }
+    } else {
+        SDL_SetRenderDrawColor(r, 160, 190, 230, 110);
+        for (auto& p : g_weather) {
+            int x = (int)p.x, y = (int)p.y;
+            SDL_RenderDrawLine(r, x, y, x - 1, y + 4);
+        }
+    }
+}
+
 // conversão mouse (pontos da janela) → mundo, com zoom
 static bool mouseToWorld(int mx, int my, float camX, float camY,
                          int winW, int winH, float tilePx, float& wx, float& wy) {
@@ -40,6 +93,7 @@ struct Game {
     float camX = 0, camY = 0;
     int selectedId = -1;
     int selectedFaunaId = -1;
+    int selectedGraveId = -1;
     unsigned day = 1;
     float timeAcc = 0.f;
     std::string omen;
@@ -172,6 +226,8 @@ static SDL_Color faunaColor(int type) {
         case 13: return {180, 140, 110, 255};// verme — rosa-acinzentado
         case 14: return {160, 130, 90, 255}; // trilobita — âmbar/cinza
         case 15: return {200, 220, 80, 255}; // inseto — amarelo-verde
+        case 16: return {70, 110, 110, 255}; // placodermio — verde-aço (Devoniano)
+        case 17: return {130, 120, 80, 255}; // peixe-pulmão — barro/oliva
         default: return {200, 200, 200, 255};
     }
 }
@@ -181,20 +237,105 @@ static void drawFauna(SDL_Renderer* r, Game& g, int winW, int winH) {
     float tp = g.tilePx();
     float viewR = winW / (2.f * tp) + 2;
     float viewRy = winH / (2.f * tp) + 2;
+    Uint32 ticks = SDL_GetTicks();
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
     for (const auto& f : g.eco->all()) {
         if (!f.alive()) continue;
         if (std::fabs(f.x - g.camX) > viewR || std::fabs(f.y - g.camY) > viewRy) continue;
         int sx, sy;
         worldToScreen(f.x, f.y, g.camX, g.camY, sx, sy, winW, winH, tp);
         SDL_Color col = faunaColor((int)f.type);
-        SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
-        // tp já inclui zoom — não multiplicar de novo
         int sz = (int)std::max(2.f, tp * 0.35f * f.g.size);
-        SDL_Rect rc = {sx - sz / 2, sy - sz / 2, sz, sz};
-        SDL_RenderFillRect(r, &rc);
+        // bob sutil (vida)
+        int bob = (int)(std::sin(ticks * 0.006f + f.id * 1.7f) * (sz * 0.08f));
+        sy += bob;
+        // sombra
+        SDL_SetRenderDrawColor(r, 0, 0, 0, 45);
+        SDL_Rect sh = {sx - sz / 2, sy + sz / 2, sz, std::max(1, sz / 3)};
+        SDL_RenderFillRect(r, &sh);
+        // corpo por "plano corporal"
+        SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
+        switch ((int)f.type) {
+            case 1: // peixe: corpo horizontal + cauda
+            case 5: // piscador
+            case 10: // tubarão
+            case 16: // placodermio
+            {
+                SDL_Rect body = {sx - sz / 2, sy - sz / 4, sz, std::max(2, sz / 2)};
+                SDL_RenderFillRect(r, &body);
+                // cauda
+                SDL_RenderDrawLine(r, sx - sz / 2, sy - sz / 4, sx - sz / 2 - sz / 3, sy - sz / 2);
+                SDL_RenderDrawLine(r, sx - sz / 2, sy + sz / 4, sx - sz / 2 - sz / 3, sy + sz / 2);
+                // olho
+                SDL_SetRenderDrawColor(r, 240, 240, 250, 255);
+                SDL_RenderDrawPoint(r, sx + sz / 3, sy - 1);
+                break;
+            }
+            case 7: // falcão: asas em V
+            {
+                SDL_RenderDrawLine(r, sx - sz, sy - sz / 2, sx, sy);
+                SDL_RenderDrawLine(r, sx + sz, sy - sz / 2, sx, sy);
+                SDL_RenderDrawLine(r, sx - sz, sy - sz / 2 + 1, sx, sy + 1);
+                SDL_RenderDrawLine(r, sx + sz, sy - sz / 2 + 1, sx, sy + 1);
+                SDL_RenderDrawPoint(r, sx, sy);
+                break;
+            }
+            case 8: // passarinho: pontinho com bico
+            {
+                SDL_Rect body = {sx - 1, sy - 1, 3, 2};
+                SDL_RenderFillRect(r, &body);
+                SDL_RenderDrawPoint(r, sx + 2, sy); // bico
+                break;
+            }
+            case 12: // baleia: corpo grande + jato
+            {
+                SDL_Rect body = {sx - sz / 2, sy - sz / 3, sz, (sz * 2) / 3};
+                SDL_RenderFillRect(r, &body);
+                // jato d'água
+                if ((ticks / 200 + f.id) % 4 == 0) {
+                    SDL_SetRenderDrawColor(r, 180, 210, 240, 160);
+                    SDL_RenderDrawPoint(r, sx, sy - sz / 2 - 2);
+                    SDL_RenderDrawPoint(r, sx - 1, sy - sz / 2 - 3);
+                    SDL_RenderDrawPoint(r, sx + 1, sy - sz / 2 - 3);
+                }
+                // olho
+                SDL_SetRenderDrawColor(r, 240, 240, 250, 255);
+                SDL_RenderDrawPoint(r, sx + sz / 3, sy - 2);
+                break;
+            }
+            case 13: // verme: barrinha curva
+            {
+                SDL_RenderDrawLine(r, sx - sz / 2, sy, sx + sz / 2, sy);
+                SDL_RenderDrawLine(r, sx - sz / 2, sy - 1, sx + sz / 4, sy - 1);
+                break;
+            }
+            case 15: // inseto: corpo + antenas
+            {
+                SDL_RenderDrawPoint(r, sx, sy);
+                SDL_RenderDrawPoint(r, sx - 1, sy);
+                SDL_RenderDrawPoint(r, sx + 1, sy);
+                SDL_RenderDrawPoint(r, sx - 1, sy - 1); // antena
+                SDL_RenderDrawPoint(r, sx + 1, sy - 1);
+                break;
+            }
+            default: // corpo arredondado (medusa, anfíbio, herbívoro, lobo, urso, tartaruga...)
+            {
+                // corpo
+                SDL_Rect body = {sx - sz / 2, sy - sz / 2, sz, sz};
+                SDL_RenderFillRect(r, &body);
+                // "cabeça" clara em cima
+                SDL_SetRenderDrawColor(r,
+                    (Uint8)std::min(255, col.r + 35),
+                    (Uint8)std::min(255, col.g + 35),
+                    (Uint8)std::min(255, col.b + 35), 255);
+                SDL_Rect head = {sx - sz / 4, sy - sz / 2, std::max(2, sz / 2), std::max(2, sz / 3)};
+                SDL_RenderFillRect(r, &head);
+                break;
+            }
+        }
         if (f.id == g.selectedFaunaId) {
             SDL_SetRenderDrawColor(r, 255, 230, 120, 255);
-            SDL_Rect ring = {sx - sz, sy - sz, sz * 2, sz * 2};
+            SDL_Rect ring = {sx - sz - 2, sy - sz - 2, sz * 2 + 4, sz * 2 + 4};
             SDL_RenderDrawRect(r, &ring);
         }
     }
@@ -285,25 +426,50 @@ static void drawCreatures(SDL_Renderer* r, Game& g, int winW, int winH) {
     float tp = g.tilePx();
     float viewR = winW / (2.f * tp) + 2;
     float viewRy = winH / (2.f * tp) + 2;
+    Uint32 ticks = SDL_GetTicks();
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
     for (const auto& c : g.sim->all()) {
         if (!c.alive()) continue;
         if (std::fabs(c.x - g.camX) > viewR || std::fabs(c.y - g.camY) > viewRy) continue;
         int sx, sy;
         worldToScreen(c.x, c.y, g.camX, g.camY, sx, sy, winW, winH, tp);
-        // pensante: quadrado, azul macho / rosa fêmea, menor = filhote
         SDL_Color col;
         if (c.state == CState::Sick) col = {170, 80, 200, 255};
         else if (c.male) col = {80, 140, 220, 255};
         else col = {230, 130, 170, 255};
-        SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
         int sz = c.juvenile()
-            ? (int)std::max(2.f, tp * 0.25f)
-            : (int)std::max(3.f, tp * 0.38f);
-        SDL_Rect rc = {sx - sz / 2, sy - sz / 2, sz, sz};
-        SDL_RenderFillRect(r, &rc);
+            ? (int)std::max(3.f, tp * 0.28f)
+            : (int)std::max(4.f, tp * 0.42f);
+        // bob ao andar
+        int bob = 0;
+        if (c.state == CState::Wander || c.state == CState::SeekFood ||
+            c.state == CState::SeekWater || c.state == CState::SeekMate) {
+            bob = (int)(std::fabs(std::sin(ticks * 0.012f + c.id)) * 1.5f);
+        }
+        sy -= bob;
+        // sombra
+        SDL_SetRenderDrawColor(r, 0, 0, 0, 50);
+        SDL_Rect sh = {sx - sz / 3, sy + sz / 2, (sz * 2) / 3, std::max(1, sz / 4)};
+        SDL_RenderFillRect(r, &sh);
+        // pernas + corpo + cabeça (pixel person)
+        SDL_SetRenderDrawColor(r, col.r, col.g, col.b, 255);
+        // pernas
+        SDL_RenderDrawLine(r, sx - 1, sy + sz / 3, sx - 1, sy + sz / 2);
+        SDL_RenderDrawLine(r, sx + 1, sy + sz / 3, sx + 1, sy + sz / 2);
+        // corpo
+        SDL_Rect body = {sx - sz / 3, sy - sz / 6, (sz * 2) / 3, (sz * 2) / 3};
+        SDL_RenderFillRect(r, &body);
+        // cabeça
+        SDL_SetRenderDrawColor(r,
+            (Uint8)std::min(255, col.r + 40),
+            (Uint8)std::min(255, col.g + 40),
+            (Uint8)std::min(255, col.b + 40), 255);
+        int hs = std::max(2, sz / 2);
+        SDL_Rect head = {sx - hs / 2, sy - sz / 2 - hs / 2, hs, hs};
+        SDL_RenderFillRect(r, &head);
         if (c.id == g.selectedId) {
             SDL_SetRenderDrawColor(r, 255, 230, 120, 255);
-            SDL_Rect ring = {sx - sz, sy - sz, sz * 2, sz * 2};
+            SDL_Rect ring = {sx - sz, sy - sz - hs, sz * 2, sz * 2 + hs};
             SDL_RenderDrawRect(r, &ring);
         }
     }
@@ -352,30 +518,77 @@ static void drawPlants(SDL_Renderer* r, Game& g, int winW, int winH) {
                 SDL_RenderFillRect(r, &meat);
             }
 
-            // árvores na floresta — retângulos, estilo pixel world
-            if (td.type == Tile::Forest && tp >= 5) {
-                int h = (x * 73856093) ^ (y * 19349663);
-                if ((h & 3) == 0) {
-                    int trunkH = (int)(tp * 0.35f);
-                    int leafW = (int)(tp * 0.55f);
-                    int leafH = (int)(tp * 0.45f);
-                    int base = sy + (int)(tp / 3);
-                    // tronco
-                    SDL_SetRenderDrawColor(r, 100, 75, 45, 255);
-                    SDL_Rect trunk = {sx - 1, base - trunkH, 2, trunkH};
-                    SDL_RenderFillRect(r, &trunk);
-                    // copa: retângulo verde
-                    SDL_SetRenderDrawColor(r, 45, 110, 40, 255);
-                    SDL_Rect canopy = {sx - leafW / 2, base - trunkH - leafH, leafW, leafH};
-                    SDL_RenderFillRect(r, &canopy);
-                    // brilho
-                    SDL_SetRenderDrawColor(r, 65, 140, 55, 255);
-                    SDL_Rect shine = {sx - leafW / 4, base - trunkH - leafH, leafW / 2, leafH / 3};
-                    SDL_RenderFillRect(r, &shine);
+            // CAVERNA: boca grande na rocha, com brilho de fogueira se acesa
+            if (td.cave && tp >= 4) {
+                // boca da caverna: retângulo grande e escuro
+                int cw = (int)(tp * 0.9f);
+                int ch = (int)(tp * 0.75f);
+                // sombra externa
+                SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+                SDL_SetRenderDrawColor(r, 0, 0, 0, 60);
+                SDL_Rect shadow = {sx - cw / 2 - 1, sy - ch / 2 - 1, cw + 2, ch + 2};
+                SDL_RenderFillRect(r, &shadow);
+                // rocha em volta (borda clara)
+                SDL_SetRenderDrawColor(r, 95, 92, 85, 255);
+                SDL_Rect frame = {sx - cw / 2 - 1, sy - ch / 2 - 1, cw + 2, ch + 2};
+                SDL_RenderDrawRect(r, &frame);
+                // boca escura
+                SDL_SetRenderDrawColor(r, 12, 10, 8, 255);
+                SDL_Rect mouth = {sx - cw / 2, sy - ch / 2, cw, ch};
+                SDL_RenderFillRect(r, &mouth);
+                // fundo da caverna (profundidade)
+                SDL_SetRenderDrawColor(r, 25, 20, 16, 255);
+                SDL_Rect deep = {sx - cw / 4, sy - ch / 4, cw / 2, ch / 2};
+                SDL_RenderFillRect(r, &deep);
+                // fogueira acesa: brilho laranja quente iluminando a boca
+                if (td.caveFire) {
+                    float pulse = 0.7f + 0.3f * std::sin((float)SDL_GetTicks() * 0.008f + x * 3.f);
+                    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+                    // glow grande
+                    for (int gr = (int)(tp * 1.1f); gr >= 2; gr -= 2) {
+                        Uint8 ga = (Uint8)(55 * pulse * (1.f - gr / (tp * 1.4f)));
+                        SDL_SetRenderDrawColor(r, 255, 160, 50, ga);
+                        fillCircle(r, sx, sy, gr);
+                    }
+                    // chama central
+                    SDL_SetRenderDrawColor(r, 255, (Uint8)(180 * pulse), 40, 255);
+                    int fs = (int)(tp * 0.35f);
+                    SDL_Rect flame = {sx - fs / 2, sy - fs / 2, fs, fs};
+                    SDL_RenderFillRect(r, &flame);
+                    // brilho interno da caverna
+                    SDL_SetRenderDrawColor(r, 255, (Uint8)(200 * pulse), 80, 100);
+                    SDL_Rect glow = {sx - cw / 4, sy - ch / 4, cw / 2, ch / 2};
+                    SDL_RenderFillRect(r, &glow);
+                }
+            }
+
+            // árvores — 3 pixels empilhados (tronco + copa), estilo pixel art minimal
+            if (td.trees > 0 && tp >= 4) {
+                int nDraw = std::min((int)td.trees, 5);
+                for (int ti = 0; ti < nDraw; ti++) {
+                    // offset pseudo-aleatório por árvore dentro do tile
+                    int h = (x * 73856093) ^ (y * 19349663) ^ (ti * 83492791);
+                    int ox = ((h & 3) - 1);          // -1..2 px
+                    int oy = (((h >> 2) & 3) - 1);   // -1..2 px
+                    int px = sx + ox;
+                    int py = sy + oy;
+                    // 3 pixels: baixo=tronco, meio=copa escura, cima=copa clara
+                    SDL_SetRenderDrawColor(r, 100, 75, 45, 255);   // tronco marrom
+                    SDL_RenderDrawPoint(r, px, py + 1);
+                    SDL_SetRenderDrawColor(r, 45, 110, 40, 255);   // copa escura
+                    SDL_RenderDrawPoint(r, px, py);
+                    // frutinha: um pixel amarelo em cima se tem fruta madura
+                    if (td.plant.kind == PlantKind::Fruit && td.plant.stage >= 2 && (h & 7) == 0) {
+                        SDL_SetRenderDrawColor(r, 250, 210, 50, 255);
+                        SDL_RenderDrawPoint(r, px, py - 1);
+                    } else {
+                        SDL_SetRenderDrawColor(r, 70, 145, 58, 255); // copa clara
+                        SDL_RenderDrawPoint(r, px, py - 1);
+                    }
                 }
             }
             // arbusto em grama — quadrado
-            if (td.type == Tile::Grass && tp >= 5) {
+            if (td.type == Tile::Grass && tp >= 5 && td.trees == 0) {
                 int h = ((x * 83492791) ^ (y * 1299709)) & 7;
                 if (h == 0) {
                     int bsz = (int)(tp * 0.3f);
@@ -660,17 +873,26 @@ int main(int, char**) {
                         g.painting = true;
                         paintAt(g, mwx, mwy);
                     } else {
+                        // TÚMULO primeiro (memória sobre tudo)
+                        Grave* grave = g.sim->graveAt(mwx, mwy, 1.8f);
                         Creature* c = pickCreature(g, mwx, mwy);
                         Fauna* f = c ? nullptr : pickFauna(g, mwx, mwy);
-                        if (c) {
+                        if (grave && !c) {
+                            g.selectedGraveId = grave->id;
+                            g.selectedId = -1;
+                            g.selectedFaunaId = -1;
+                        } else if (c) {
                             g.selectedId = c->id;
                             g.selectedFaunaId = -1;
+                            g.selectedGraveId = -1;
                         } else if (f) {
                             g.selectedFaunaId = f->id;
                             g.selectedId = -1;
+                            g.selectedGraveId = -1;
                         } else {
                             g.selectedId = -1;
                             g.selectedFaunaId = -1;
+                            g.selectedGraveId = -1;
                         }
                     }
                 }
@@ -754,6 +976,7 @@ int main(int, char**) {
         int ty1 = std::min(g.world.height() - 1, (int)(g.camY + viewH / (2.f * tp)) + 1);
 
         float light = g.world.lightLevel();
+        float shimmerT = (float)SDL_GetTicks() * 0.0015f;
 
         for (int y = ty0; y <= ty1; y++) {
             for (int x = tx0; x <= tx1; x++) {
@@ -768,14 +991,62 @@ int main(int, char**) {
                 int ts = (int)std::max(3.f, tp + 1); // +1 sobrepõe: sem costura de grade
                 SDL_Rect rc = {sx, sy, ts, ts};
                 SDL_RenderFillRect(ren, &rc);
+                // BRILHO NA ÁGUA: ondulação procedural
+                if ((t.type == Tile::Water || t.type == Tile::DeepWater) && light > 0.4f && tp >= 5) {
+                    float wave = std::sin(shimmerT * 2.f + x * 0.7f + y * 0.9f);
+                    if (wave > 0.55f) {
+                        Uint8 a = (Uint8)(40.f * light * (wave - 0.55f) * 2.2f);
+                        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+                        SDL_SetRenderDrawColor(ren, 180, 220, 255, a);
+                        int px = sx + ((x * 3 + y * 5) % std::max(2, ts - 2));
+                        int py = sy + ((x * 7 + y * 2) % std::max(2, ts - 2));
+                        SDL_RenderDrawPoint(ren, px, py);
+                        if (t.type == Tile::Water && tp >= 8)
+                            SDL_RenderDrawPoint(ren, px + 1, py);
+                    }
+                }
             }
         }
 
         drawBio(ren, g, viewW, viewH);
         drawPlants(ren, g, viewW, viewH);
+        // TÚMULOS: ossos brancos + cruz de memória
+        if (g.sim) {
+            float tpg = g.tilePx();
+            for (const auto& grave : g.sim->graves()) {
+                if (std::fabs(grave.x - g.camX) > winW / (2.f * tpg) + 2 ||
+                    std::fabs(grave.y - g.camY) > winH / (2.f * tpg) + 2) continue;
+                int gx, gy;
+                worldToScreen(grave.x, grave.y, g.camX, g.camY, gx, gy, winW, winH, tpg);
+                int gs = (int)std::max(3.f, tpg * 0.35f);
+                // montinho de terra
+                SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+                SDL_SetRenderDrawColor(ren, 60, 45, 30, 180);
+                SDL_Rect mound = {gx - gs, gy + gs / 3, gs * 2, std::max(2, gs / 2)};
+                SDL_RenderFillRect(ren, &mound);
+                // ossos (branco)
+                SDL_SetRenderDrawColor(ren, 220, 218, 205, 255);
+                SDL_RenderDrawLine(ren, gx - gs / 2, gy, gx + gs / 2, gy);
+                SDL_RenderDrawLine(ren, gx - gs / 3, gy - 1, gx + gs / 3, gy - 1);
+                // cruz de memória
+                SDL_SetRenderDrawColor(ren, 160, 150, 130, 255);
+                SDL_RenderDrawLine(ren, gx, gy - gs, gx, gy - gs / 3);
+                SDL_RenderDrawLine(ren, gx - gs / 3, gy - gs * 2 / 3, gx + gs / 3, gy - gs * 2 / 3);
+                // selecionado: brilho
+                if (grave.id == g.selectedGraveId) {
+                    SDL_SetRenderDrawColor(ren, 255, 230, 140, 255);
+                    SDL_Rect ring = {gx - gs - 2, gy - gs - 2, gs * 2 + 4, gs * 2 + 4};
+                    SDL_RenderDrawRect(ren, &ring);
+                }
+            }
+        }
         drawCommunities(ren, g, viewW, viewH);
         drawFauna(ren, g, viewW, viewH);
         drawCreatures(ren, g, viewW, viewH);
+
+        // CLIMA: chuva (primavera/outono) e neve (inverno)
+        updateWeather(winW, winH, dt, g.world.season(), light);
+        drawWeather(ren, winW, winH, g.world.season(), light);
 
         // ---- NOITE: gradiente azul + fogueiras iluminam ----
         if (light < 0.9f) {
@@ -870,6 +1141,13 @@ int main(int, char**) {
         hs.uiWheel = g.uiWheel;
         hs.mouseWinX = mx;
         hs.mouseWinY = my;
+        // túmulo selecionado
+        hs.selectedGrave = nullptr;
+        if (g.selectedGraveId >= 0) {
+            for (auto& gv : g.sim->graves()) {
+                if (gv.id == g.selectedGraveId) { hs.selectedGrave = &gv; break; }
+            }
+        }
         g.hud.draw(ren, hs);
 
         if (hs.creatureCount == 0 && !g.paused) {
