@@ -261,6 +261,11 @@ struct Creature {
     // CRÔNICA PESSOAL: linha do tempo da vida (vira túmulo ao morrer)
     std::vector<LifeEvent> chronicle;
     void addChronicle(unsigned day, const std::string& text);
+    // MEMÓRIA DE COMIDA: onde achou comida boa (inteligência)
+    float memFoodX = -1.f, memFoodY = -1.f;
+    float memFoodT = 0.f; // por quanto tempo lembra
+    // MEMÓRIA DE TÚMULO: visita familiar morto de vez em quando
+    float lastGraveVisit = -999.f;
 
     void formIdea(IdeaKind kind, const std::string& text, float power, unsigned day, float morality = 0.5f);
     Idea* findIdea(const std::string& fragment);

@@ -38,6 +38,7 @@ struct HudState {
     float mouseX = 0, mouseY = 0;
     bool mouseInWorld = false;
     bool showLadder = true;
+    bool showChronicle = false; // F1: leitor livre da crônica
     CreatureSim::Stats sageStats;
     PlantGene plantGene;
     int plantCount = 0;
@@ -65,6 +66,7 @@ private:
     TTF_Font* fontSmall_ = nullptr;
     float uiScale_ = 1.f;
     float scrollInspect_ = 0.f; // rolagem do painel de inspeção
+    float scrollChronicle_ = 0.f; // rolagem do leitor de crônica (F1)
     int lastInspectId_ = -1;    // reseta rolagem ao trocar de ser
 
     // cache de texturas de texto (evita criar/destroir textura por frame)

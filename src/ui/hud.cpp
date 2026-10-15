@@ -1336,6 +1336,74 @@ void Hud::draw(SDL_Renderer* r, const HudState& st) {
         text(r, fontBig_, (winW - tw) / 2, topH + 18, st.omen, {255, 240, 200, a});
     }
 
+    // ============ LEITOR DE CRÔNICA (F1) — histórico livre ============
+    if (st.showChronicle && st.events && !st.events->empty()) {
+        int hw = std::min(560, winW - 40);
+        int hh = std::min(winH - 120, 480);
+        int hx = (winW - hw) / 2;
+        int hy = (winH - hh) / 2;
+        panel(r, hx, hy, hw, hh, 235);
+        text(r, fontBig_, hx + 14, hy + 8, "CRONICA DO MUNDO", {255, 220, 150, 255});
+        text(r, fontSmall_, hx + hw - 80, hy + 12, "F1 fecha", {140, 150, 160, 255}, false);
+        SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(r, 80, 150, 180, 70);
+        SDL_RenderDrawLine(r, hx + 14, hy + 32, hx + hw - 14, hy + 32);
+        // rolagem
+        if (st.uiWheel != 0.f) {
+            float mxw = st.mouseWinX, myw = st.mouseWinY;
+            if (mxw >= hx && mxw <= hx + hw && myw >= hy && myw <= hy + hh) {
+                scrollChronicle_ -= st.uiWheel * 22.f;
+            }
+        }
+        SDL_Rect clip = {hx + 4, hy + 36, hw - 8, hh - 44};
+        SDL_RenderSetClipRect(r, &clip);
+        int n = (int)st.events->size();
+        int rowH = 14;
+        int contentH = n * rowH;
+        int viewH = hh - 44;
+        scrollChronicle_ = clampf(scrollChronicle_, 0.f, (float)std::max(0, contentH - viewH));
+        int startI = (int)(scrollChronicle_ / rowH);
+        int offY = (int)scrollChronicle_ % rowH;
+        int ty = hy + 40 - offY;
+        auto evCol = [](EvKind k) -> SDL_Color {
+            switch (k) {
+                case EvKind::Birth:     return {160, 220, 255, 255};
+                case EvKind::Death:     return {180, 160, 200, 255};
+                case EvKind::Discovery: return {255, 220, 120, 255};
+                case EvKind::Build:     return {140, 220, 150, 255};
+                case EvKind::War:       return {255, 130, 110, 255};
+                case EvKind::Love:      return {255, 160, 190, 255};
+                case EvKind::Idea:      return {140, 220, 240, 255};
+                case EvKind::Health:    return {230, 200, 140, 255};
+                default:                return {200, 210, 215, 255};
+            }
+        };
+        for (int i = startI; i < n && ty < hy + hh - 8; i++) {
+            const SimEvent& e = (*st.events)[i];
+            char line[256];
+            snprintf(line, sizeof(line), "%s", e.text.c_str());
+            std::string msg = line;
+            if (msg.size() > 62) msg = msg.substr(0, 60) + "..";
+            text(r, fontSmall_, hx + 14, ty, msg, evCol(e.kind), false);
+            ty += rowH;
+        }
+        // scrollbar
+        if (contentH > viewH) {
+            int sbX = hx + hw - 8;
+            SDL_SetRenderDrawColor(r, 40, 50, 65, 180);
+            SDL_Rect track = {sbX, hy + 38, 3, hh - 48};
+            SDL_RenderFillRect(r, &track);
+            float frac = (float)viewH / contentH;
+            int thumbH = std::max(24, (int)(track.h * frac));
+            float sp = (contentH - viewH) > 0 ? scrollChronicle_ / (contentH - viewH) : 0.f;
+            int thumbY = track.y + (int)((track.h - thumbH) * sp);
+            SDL_SetRenderDrawColor(r, 200, 180, 120, 220);
+            SDL_Rect thumb = {sbX, thumbY, 3, thumbH};
+            SDL_RenderFillRect(r, &thumb);
+        }
+        SDL_RenderSetClipRect(r, nullptr);
+    }
+
     // ============ AJUDA ============
     if (st.showHelp) {
         int hw = 580, hh = 360;
@@ -1362,6 +1430,7 @@ void Hud::draw(SDL_Renderer* r, const HudState& st) {
             {"R", "mundo novo"},
             {"F5 / F9", "salvar / carregar"},
             {"L", "Escada da Vida"},
+            {"F1", "ler a Cronica do Mundo"},
             {"H", "fechar ajuda"},
             {"ESC", "sair"},
         };

@@ -181,6 +181,37 @@ void CreatureSim::updateCommunities(float dt, unsigned day) {
             }
             if (!goodSite) continue;
 
+            // SE TEM TÚMULO DE FAMÍLIA POR PERTO, funda perto dele (lar junto à memória)
+            float prefX = cx, prefY = cy;
+            {
+                float bestG = 1e9f;
+                bool foundG = false;
+                for (auto& gv : graves_) {
+                    bool family = false;
+                    // túmulo de quem tem o mesmo sobrenome ou é parente
+                    if (!a.surname.empty() && gv.surname == a.surname) family = true;
+                    if (!b.surname.empty() && gv.surname == b.surname) family = true;
+                    if (gv.id == a.parentA || gv.id == a.parentB ||
+                        gv.id == b.parentA || gv.id == b.parentB) family = true;
+                    if (!family) continue;
+                    float d = dist2(cx, cy, gv.x, gv.y);
+                    if (d < bestG && d < 400.f) { bestG = d; prefX = gv.x + frand(-2, 2); prefY = gv.y + frand(-2, 2); foundG = true; }
+                }
+                if (foundG) {
+                    cx = prefX;
+                    cy = prefY;
+                    // precisa ser site válido no novo local
+                    bool ok2 = world_.nearWater(cx, cy, 8.f);
+                    if (!ok2) {
+                        int rc = 8;
+                        for (int y = (int)cy - rc; y <= (int)cy + rc && !ok2; y++)
+                            for (int x = (int)cx - rc; x <= (int)cx + rc; x++)
+                                if (world_.isCave(x, y)) { ok2 = true; break; }
+                    }
+                    if (!ok2) { cx = (a.x + b.x) * 0.5f; cy = (a.y + b.y) * 0.5f; }
+                }
+            }
+
             Community comm;
             comm.id = nextCommunityId_++;
             comm.name = makeCommunityName();
@@ -206,11 +237,38 @@ void CreatureSim::updateCommunities(float dt, unsigned day) {
         }
     }
 
-    // construções e encontros
-    for (auto& comm : communities_) {
-        if (comm.memberIds.empty()) continue;
-        // fogueira e toca: precisam de ferramenta em alguém
-        if (!comm.hasFire() || !comm.hasHut()) {
+        // construções e encontros
+        for (auto& comm : communities_) {
+            if (comm.memberIds.empty()) continue;
+
+            // ---- MOLDAR O TERRENO: o lar transforma a volta ----
+            if (chance(0.08f * dt * 30.f)) {
+                int tx = (int)comm.x + irand(-5, 5);
+                int ty = (int)comm.y + irand(-5, 5);
+                if (world_.inBounds(tx, ty)) {
+                    TileData& t = world_.at(tx, ty);
+                    // pisoteio: grama vira solo batido perto da casa
+                    if (t.type == Tile::Grass && !t.cave && t.trees == 0 &&
+                        dist2(tx + 0.5f, ty + 0.5f, comm.x, comm.y) < 36.f) {
+                        t.type = Tile::Soil;
+                    }
+                    // árvore demais perto da casa: derruba (clareira)
+                    else if (t.trees >= 3 && dist2(tx + 0.5f, ty + 0.5f, comm.x, comm.y) < 16.f) {
+                        int got = 0;
+                        if (world_.chopTree(tx, ty, got)) {
+                            if (chance(0.15f))
+                                addEvent(comm.name + " abriu uma clareira perto de casa.", EvKind::Build);
+                        }
+                    }
+                    // solo batido ganha fertilidade (composto)
+                    else if (t.type == Tile::Soil && chance(0.1f)) {
+                        t.fertility = clampf(t.fertility + 0.01f, 0.f, 1.f);
+                    }
+                }
+            }
+
+            // fogueira e toca: precisam de ferramenta em alguém
+            if (!comm.hasFire() || !comm.hasHut()) {
             for (int id : comm.memberIds) {
                 Creature* m = get(id);
                 if (!m || !m->alive()) continue;
@@ -232,7 +290,22 @@ void CreatureSim::updateCommunities(float dt, unsigned day) {
                         // caverna: fogueira é mais fácil (abrigo pronto)
                         if (world_.isCave((int)comm.x, (int)comm.y)) hasWood = true;
                         if (hasWood) {
-                            Building b; b.type = 0; b.x = comm.x + frand(-2, 2); b.y = comm.y + frand(-2, 2);
+                            // prefere perto de túmulo de família (lar junto à memória)
+                            float bx = comm.x + frand(-2, 2), by = comm.y + frand(-2, 2);
+                            for (auto& gv : graves_) {
+                                bool fam = false;
+                                for (int id : comm.memberIds) {
+                                    Creature* mem = get(id);
+                                    if (!mem) continue;
+                                    if (!mem->surname.empty() && gv.surname == mem->surname) { fam = true; break; }
+                                }
+                                if (fam && dist2(gv.x, gv.y, comm.x, comm.y) < 100.f) {
+                                    bx = gv.x + frand(-1.5f, 1.5f);
+                                    by = gv.y + frand(-1.5f, 1.5f);
+                                    break;
+                                }
+                            }
+                            Building b; b.type = 0; b.x = bx; b.y = by;
                             comm.buildings.push_back(b);
                             changeReputation(*m, 0.05f, day, "construiu fogueira");
                             // acende fogueira na caverna se a comunidade está numa
@@ -1371,6 +1444,19 @@ bool CreatureSim::canSenseToxic(const Creature& c) const {
 void CreatureSim::scanFood(const Creature& c, float& bx, float& by, float& best) const {
     best = -1e9f;
     bx = by = 0.f;
+    // MEMÓRIA: se lembra de um lugar bom e ainda tem planta, vai direto
+    if (c.memFoodT > 0.f && c.memFoodX >= 0.f) {
+        int mx = (int)c.memFoodX, my = (int)c.memFoodY;
+        if (world_.inBounds(mx, my)) {
+            const Plant& p = world_.at(mx, my).plant;
+            if (p.kind != PlantKind::None && p.stage >= 1) {
+                bx = c.memFoodX + 0.5f;
+                by = c.memFoodY + 0.5f;
+                best = 1.5f; // score alto: memória vale muito
+                return;
+            }
+        }
+    }
     int r = (int)c.g.vision;
     int cx = (int)c.x, cy = (int)c.y;
     for (int y = cy - r; y <= cy + r; y++) {
@@ -1573,6 +1659,10 @@ bool CreatureSim::tryEat(Creature& c, float dt) {
         if (c.k.fire_knowledge > 0.4f) c.energy = clampf(c.energy + 6.f * c.k.fire_knowledge, 0.f, 100.f);
         c.k.plant_value = clampf(c.k.plant_value + 0.07f, 0.f, 1.f);
         c.k.discrimination = clampf(c.k.discrimination + 0.02f, 0.f, 1.f);
+        // MEMÓRIA: lembra onde achou comida boa (inteligência)
+        c.memFoodX = (float)tx;
+        c.memFoodY = (float)ty;
+        c.memFoodT = 30.f + c.g.intelligence * 40.f; // lembra dias
         // planta-cura: aprende antídoto e se cura
         if (geneCure > 0.25f) {
             c.k.antidote = clampf(c.k.antidote + geneCure * 0.25f, 0.f, 1.f);
@@ -1949,6 +2039,9 @@ void CreatureSim::teachNearby(float dt) {
         // cultura: filhos herdam ferramenta e fogo dos pais (ensino real)
         j.k.tool_skill = lerpf(j.k.tool_skill, teacher->k.tool_skill, w * 0.9f);
         j.k.fire_knowledge = lerpf(j.k.fire_knowledge, teacher->k.fire_knowledge, w * 0.8f);
+        // INTELIGÊNCIA: ensinar acelera o aluno
+        j.g.intelligence = clampf(j.g.intelligence + 0.008f * dt * (0.5f + teacher->g.intelligence), 0.f, 1.f);
+        j.mind.memory = clampf(j.mind.memory + 0.003f * dt, 0.f, 1.f);
     }
 }
 
@@ -2469,6 +2562,24 @@ void CreatureSim::behavior(Creature& c, float dt, unsigned day) {
         return;
     }
 
+    // 1b) VISITA AO TÚMULO: mesmo fora do luto profundo, lembra de vez em quando
+    if (c.graveX >= 0.f && c.em.grief < 0.45f && c.em.grief > 0.05f &&
+        c.stateT <= 0.f && chance(0.004f * dt * 30.f * (0.5f + c.em.respect))) {
+        // visita rápida: conforto e lembrança
+        if (dist2(c.x, c.y, c.graveX, c.graveY) < 9.f) {
+            c.em.grief = clampf(c.em.grief - 0.04f, 0.f, 1.f);
+            c.em.comfort = clampf(c.em.comfort + 0.03f, 0.f, 1.f);
+            c.em.respect = clampf(c.em.respect + 0.02f, 0.f, 1.f);
+            c.addChronicle(day, "visitou o tumulo de " +
+                (c.graveName.empty() ? std::string("alguem querido") : c.graveName));
+            c.stateT = frand(30.f, 60.f); // não visita toda hora
+        } else {
+            c.state = CState::Gather;
+            moveToward(c, c.graveX, c.graveY, dt, 0.55f);
+            return;
+        }
+    }
+
     // 2) PROTEGER A CRIANÇA: adulto não foge de quem ameaça filho
     if (!c.juvenile() && c.energy > 20.f) {
         // acha filho em perigo
@@ -2531,7 +2642,9 @@ void CreatureSim::behavior(Creature& c, float dt, unsigned day) {
     // (já tratado no findThreat via speciesBonds)
 
     // 3c) investigar: curiosidade + pensador = cientista; ousado explora mais
+    // INTELIGÊNCIA: pensador investiga muito mais; inteligência alta acelera
     float invChance = 0.006f * c.em.curiosity * (0.4f + c.pers.thinker) * (0.5f + c.pers.wanderlust * 0.5f);
+    invChance *= (1.f + c.g.intelligence * 1.5f + c.mind.creativity);
     if (c.em.curiosity > 0.35f && c.energy > 35.f && c.age > 0.8f && chance(invChance)) {
         // acha algo interessante: carcaça recente, planta estranha, predador morto
         float bx = c.x, by = c.y, best = -1.f;
@@ -2567,6 +2680,7 @@ void CreatureSim::behavior(Creature& c, float dt, unsigned day) {
                 if (kind == 1) {
                     c.k.predator_knowledge = clampf(c.k.predator_knowledge + 0.06f, 0.f, 1.f);
                     c.g.intelligence = clampf(c.g.intelligence + 0.02f, 0.f, 1.f);
+                    learnPleasure(c, 0.12f);
                     c.formIdea(IdeaKind::Predator, "a morte tem um motivo", 0.4f, currentDay_, 0.45f);
                     if (chance(0.15f)) addEvent(c.name + " observou uma morte e entendeu o perigo.", EvKind::Discovery);
                 } else if (kind == 2) {
@@ -3008,16 +3122,17 @@ void CreatureSim::updateOne(Creature& c, float dt, unsigned day) {
     }
     updateEmotions(c, dt, day);
 
-    // doença: densidade alta + higiene zero = epidemia
+    // doença: não mata — só enfraquece (usuário pediu: doenças não matam)
     if (c.sick_ > 0.f) {
         c.sick_ -= dt;
-        c.energy -= 0.3f * dt;
+        // sem dano de energia; só saúde cai um pouco (já abaixo)
         if (c.sick_ <= 0.f) {
             addEvent(c.name + " se recuperou da doença.", EvKind::Health);
         }
     }
 
     c.age += dt / SECONDS_PER_DAY;
+    if (c.memFoodT > 0.f) c.memFoodT -= dt;
     // corpo e mente crescem com a idade
     float ageFactor = clampf(c.age / c.g.lifespan, 0.f, 1.f);
     c.body.strength = clampf(c.body.strength + 0.003f * dt * (1.f - ageFactor * 0.5f), 0.f, 1.f);
@@ -3056,10 +3171,12 @@ void CreatureSim::updateOne(Creature& c, float dt, unsigned day) {
         drain += 0.28f * c.g.speed;
     }
     if (c.state == CState::Rest || c.state == CState::Mourn) drain *= 0.45f;
-    // raiva e medo consomem corpo
-    drain *= (1.f + c.em.anger * 0.25f + c.em.fear * 0.2f);
+    // raiva e medo consomem corpo — mas pouco (viver bem é o padrão)
+    drain *= (1.f + c.em.anger * 0.10f + c.em.fear * 0.08f);
+    // doente: metabolismo mais lento, gasta MENOS (não mais)
+    if (c.sick_ > 0.f) drain *= 0.7f;
     c.energy -= drain * dt;
-    c.hydration -= 0.45f * c.g.metabolism * dt;
+    c.hydration -= 0.35f * c.g.metabolism * dt;
 
     if (c.mateCooldown > 0.f) c.mateCooldown -= dt;
 

@@ -103,6 +103,7 @@ struct Game {
     int brushRadius = 3;
     bool showHelp = false;
     bool showLadder = true;
+    bool showChronicle = false; // F1: leitor livre da crônica
     int fps = 0;
     int fpsCount = 0;
     float fpsTimer = 0.f;
@@ -772,6 +773,7 @@ int main(int, char**) {
                 else if (k == SDLK_SPACE) g.paused = !g.paused;
                 else if (k == SDLK_h) g.showHelp = !g.showHelp;
                 else if (k == SDLK_l) g.showLadder = !g.showLadder;
+                else if (k == SDLK_F1) g.showChronicle = !g.showChronicle;
                 else if (k == SDLK_e) g.editMode = !g.editMode;
                 else if (k == SDLK_F5) {
                     std::string path = std::string(getenv("HOME") ? getenv("HOME") : ".") + "/.skc_e195_save.txt";
@@ -1141,6 +1143,7 @@ int main(int, char**) {
         hs.uiWheel = g.uiWheel;
         hs.mouseWinX = mx;
         hs.mouseWinY = my;
+        hs.showChronicle = g.showChronicle;
         // túmulo selecionado
         hs.selectedGrave = nullptr;
         if (g.selectedGraveId >= 0) {
