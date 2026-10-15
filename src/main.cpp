@@ -519,47 +519,24 @@ static void drawPlants(SDL_Renderer* r, Game& g, int winW, int winH) {
                 SDL_RenderFillRect(r, &meat);
             }
 
-            // CAVERNA: boca grande na rocha, com brilho de fogueira se acesa
+            // CAVERNA: quadrado escuro no chão (boca da toca)
             if (td.cave && tp >= 4) {
-                // boca da caverna: retângulo grande e escuro
-                int cw = (int)(tp * 0.9f);
-                int ch = (int)(tp * 0.75f);
-                // sombra externa
+                int cs = (int)(tp * 0.7f);
                 SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-                SDL_SetRenderDrawColor(r, 0, 0, 0, 60);
-                SDL_Rect shadow = {sx - cw / 2 - 1, sy - ch / 2 - 1, cw + 2, ch + 2};
-                SDL_RenderFillRect(r, &shadow);
-                // rocha em volta (borda clara)
-                SDL_SetRenderDrawColor(r, 95, 92, 85, 255);
-                SDL_Rect frame = {sx - cw / 2 - 1, sy - ch / 2 - 1, cw + 2, ch + 2};
-                SDL_RenderDrawRect(r, &frame);
-                // boca escura
-                SDL_SetRenderDrawColor(r, 12, 10, 8, 255);
-                SDL_Rect mouth = {sx - cw / 2, sy - ch / 2, cw, ch};
-                SDL_RenderFillRect(r, &mouth);
-                // fundo da caverna (profundidade)
-                SDL_SetRenderDrawColor(r, 25, 20, 16, 255);
-                SDL_Rect deep = {sx - cw / 4, sy - ch / 4, cw / 2, ch / 2};
-                SDL_RenderFillRect(r, &deep);
-                // fogueira acesa: brilho laranja quente iluminando a boca
+                SDL_SetRenderDrawColor(r, 0, 0, 0, 200);
+                SDL_Rect dark = {sx - cs / 2, sy - cs / 2, cs, cs};
+                SDL_RenderFillRect(r, &dark);
+                // núcleo bem escuro
+                SDL_SetRenderDrawColor(r, 8, 6, 5, 255);
+                SDL_Rect core = {sx - cs / 2 + 1, sy - cs / 2 + 1, cs - 2, cs - 2};
+                SDL_RenderFillRect(r, &core);
+                // fogueira acesa: quadrado laranja no centro
                 if (td.caveFire) {
                     float pulse = 0.7f + 0.3f * std::sin((float)SDL_GetTicks() * 0.008f + x * 3.f);
-                    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-                    // glow grande
-                    for (int gr = (int)(tp * 1.1f); gr >= 2; gr -= 2) {
-                        Uint8 ga = (Uint8)(55 * pulse * (1.f - gr / (tp * 1.4f)));
-                        SDL_SetRenderDrawColor(r, 255, 160, 50, ga);
-                        fillCircle(r, sx, sy, gr);
-                    }
-                    // chama central
-                    SDL_SetRenderDrawColor(r, 255, (Uint8)(180 * pulse), 40, 255);
-                    int fs = (int)(tp * 0.35f);
-                    SDL_Rect flame = {sx - fs / 2, sy - fs / 2, fs, fs};
-                    SDL_RenderFillRect(r, &flame);
-                    // brilho interno da caverna
-                    SDL_SetRenderDrawColor(r, 255, (Uint8)(200 * pulse), 80, 100);
-                    SDL_Rect glow = {sx - cw / 4, sy - ch / 4, cw / 2, ch / 2};
-                    SDL_RenderFillRect(r, &glow);
+                    SDL_SetRenderDrawColor(r, 255, (Uint8)(160 * pulse), 40, 255);
+                    int fs = std::max(2, cs / 3);
+                    SDL_Rect fire = {sx - fs / 2, sy - fs / 2, fs, fs};
+                    SDL_RenderFillRect(r, &fire);
                 }
             }
 
